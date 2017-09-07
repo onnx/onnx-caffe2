@@ -8,7 +8,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="onnx-caffe2",
-    version='0.1',
+    version='0.1.1',
     description="Caffe2 frontend and backend of Open Neural Network Exchange",
     install_requires=['enum'],
     setup_requires=['pytest-runner'],
