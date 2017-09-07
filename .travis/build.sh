@@ -27,7 +27,7 @@ fi
 
 # install onnx
 onnx_dir="$workdir/onnx"
-git clone "ssh://git@github.com/onnx/onnx.git" "$onnx_dir" --recursive
+git clone "https://github.com/onnx/onnx.git" "$onnx_dir" --recursive
 pip install "$onnx_dir"
 pip install pytest-cov
 
