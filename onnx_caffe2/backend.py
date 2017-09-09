@@ -315,7 +315,9 @@ class Caffe2Backend(Backend):
                 for init_tensor in predict_graph.initializer:
                     workspace.FeedBlob(init_tensor.name, to_array(init_tensor))
                 workspace.RunNetOnce(init_net)
-            uninitialized = filter(lambda x:not workspace.HasBlob(x), predict_net.external_input)
+            uninitialized = [x
+                             for x in predict_net.external_input
+                             if not workspace.HasBlob(x)]
             return Caffe2Rep(init_net, predict_net, device, tmp_ws, uninitialized)
 
     @classmethod
