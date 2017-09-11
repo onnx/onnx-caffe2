@@ -2,6 +2,9 @@ os: linux
 dist: trusty
 sudo: required
 language: python
+python:
+  - "2.7"
+  - "3.6"
 
 install:
   - ./.travis/install.sh
@@ -17,7 +20,5 @@ cache:
 env:
   global:
     - PB_VERSION=2.6.1
-
-matrix:
-  include:
-  - env: CAFFE2_VERSION=6beec50
+  matrix:
+    - CAFFE2_VERSION=c4f4668
