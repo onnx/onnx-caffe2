@@ -12,7 +12,7 @@ if sys.version_info < (3, 4):
 
 setup(
     name="onnx-caffe2",
-    version='0.1.2',
+    version='0.1.3',
     description="Caffe2 frontend and backend of Open Neural Network Exchange",
     install_requires=install_requires,
     setup_requires=['pytest-runner'],
