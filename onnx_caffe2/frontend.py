@@ -21,7 +21,7 @@ _special_translator = {}
 _blacklist_caffe2_args = {'order', 'global_pooling'}
 
 # expected argument values
-_expected_arg_values = {'order': ['NCHW'], 'global_pooling': [1]}
+_expected_arg_values = {'order': [b'NCHW'], 'global_pooling': [1]}
 
 _renamed_args = {
     'Squeeze': {'dims': 'axes'},

@@ -96,7 +96,7 @@ class TestCaffe2Reference(unittest.TestCase):
             name="test_initializer",
             inputs=["X", "Y", "weight"],
             outputs=["W"],
-            initializer=[helper.make_tensor("weight", onnx_pb2.TensorProto.FLOAT, [2, 2], weight.flatten())]
+            initializer=[helper.make_tensor("weight", onnx_pb2.TensorProto.FLOAT, [2, 2], weight.flatten().astype(float))]
         )
         def sigmoid(x):
             return 1 / (1 + np.exp(-x))
