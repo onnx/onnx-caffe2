@@ -116,12 +116,16 @@ const2_onnx = onnx.helper.make_tensor("const2", onnx.TensorProto.FLOAT, (S, S), 
 #
 # TODO: Some of these tests will be done most conveniently by running a Caffe2
 # operator directly (i.e., something like a before-after translation). If you
-# need this, extend the test runner to handle these conveniently
+# need this, extend the test runner to handle these conveniently; possibly
+# use Caffe2's immediate mode
 node_tests = [
   CN("test_abs", N("Abs"), np.abs, inputs=((S, S, S),)),
   CN("test_add", N("Add"), np.add, inputs=((S, S, S), (S, S, S))),
   CN("test_add_bcast", N("Add", broadcast=1), np.add, inputs=((S, M), (S))),
   CN("test_constant", N("Constant", value=const2_onnx), lambda: const2_np, inputs=()),
+  # TODO: Are we actually supporting other dot modes?  In that case, some fancy
+  # footwork is necessary...
+  CN("test_dot", N("Dot"), np.dot, inputs=((S, M), (M, L))),
   CN("test_relu", N("Relu"), lambda x: np.clip(x, 0, np.inf), inputs=((S, S, S),)),
   # TODO: Add all the other operators
   ]
