@@ -130,6 +130,7 @@ class Caffe2Backend(Backend):
         'Conv3D': 'Conv',
         'MaxPool2D': 'MaxPool',
         'AveragePool2D': 'AveragePool',
+        'Dot': 'MatMul',
     }
 
     # NB: domain is RENAMED operator names, not the originals
