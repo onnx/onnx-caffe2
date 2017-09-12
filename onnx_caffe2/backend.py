@@ -280,7 +280,7 @@ class Caffe2Backend(Backend):
 
     @classmethod
     def _create_global_pool_op(cls, node_def, env):
-        op_def = cls._common_op_tranlator(node_def, env)
+        op_def = cls._common_op_translator(node_def, env)
 
         assert node_def.op_type.startswith('Global')
         op_def.type = node_def.op_type.split('Global')[-1]
@@ -364,11 +364,11 @@ class Caffe2Backend(Backend):
         if node_def.op_type in cls._special_operators:
             translator = getattr(cls, cls._special_operators[node_def.op_type])
         else:
-            translator = cls._common_op_tranlator
+            translator = cls._common_op_translator
         return translator(node_def, env)
 
     @classmethod
-    def _common_op_tranlator(cls, node_def, env):
+    def _common_op_translator(cls, node_def, env):
         op_def = caffe2_pb2.OperatorDef()
         op_def.input.extend([env[i] for i in node_def.input])
 
