@@ -8,6 +8,7 @@ import os
 import sys
 from setuptools import setup, find_packages, Command
 import setuptools.command.build_py
+import subprocess
 from textwrap import dedent
 
 TOP_DIR = os.path.realpath(os.path.dirname(__file__))
@@ -17,8 +18,14 @@ SRC_DIR = os.path.join(TOP_DIR, 'onnx_caffe2')
 # Version
 ################################################################################
 
-VersionInfo = namedtuple('VersionInfo', ['version'])(
-    version='0.1.3'
+try:
+    git_version = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=TOP_DIR).decode('ascii').strip()
+except subprocess.CalledProcessError:
+    git_version = None
+
+VersionInfo = namedtuple('VersionInfo', ['version', 'git_version'])(
+    version='0.1.3',
+    git_version=git_version
 )
 
 ################################################################################
@@ -38,6 +45,7 @@ class create_version(Command):
         with open(os.path.join(SRC_DIR, 'version.py'), 'w') as f:
             f.write(dedent('''
             version = '{version}'
+            git_version = '{git_version}'
             '''.format(**dict(VersionInfo._asdict()))))
 
 
