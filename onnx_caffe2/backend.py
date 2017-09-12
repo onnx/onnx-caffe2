@@ -171,7 +171,7 @@ class Caffe2Backend(Backend):
             workspace.RunOperatorOnce(
                 cls._onnx_node_to_caffe2_op(node, env))
             output_values = [workspace.FetchBlob(env[name]) for name in node.output]
-            return namedtupledict('Outputs', node.output)(*output_values)a
+            return namedtupledict('Outputs', node.output)(*output_values)
 
     @classmethod
     def fill_values(cls, arg, tensor):
