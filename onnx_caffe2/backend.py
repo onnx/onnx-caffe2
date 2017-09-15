@@ -125,11 +125,6 @@ class Caffe2Backend(Backend):
     # In most cases, this should be empty - as the effort of ONNX is
     # to unify the operator definitions.
     _renamed_operators = {
-        'Conv1D': 'Conv',
-        'Conv2D': 'Conv',
-        'Conv3D': 'Conv',
-        'MaxPool2D': 'MaxPool',
-        'AveragePool2D': 'AveragePool',
         'Dot': 'MatMul',
     }
 
