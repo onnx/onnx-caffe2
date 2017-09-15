@@ -8,6 +8,7 @@ import os
 import sys
 from setuptools import setup, find_packages, Command
 import setuptools.command.build_py
+import setuptools.command.develop
 import subprocess
 from textwrap import dedent
 
@@ -54,9 +55,16 @@ class build_py(setuptools.command.build_py.build_py):
         self.run_command('create_version')
         setuptools.command.build_py.build_py.run(self)
 
+
+class develop(setuptools.command.develop.develop):
+    def run(self):
+        self.run_command('create_version')
+        setuptools.command.develop.develop.run(self)
+
 cmdclass={
     'create_version': create_version,
     'build_py': build_py,
+    'develop': develop,
 }
 
 ################################################################################
