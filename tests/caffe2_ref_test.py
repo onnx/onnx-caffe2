@@ -236,12 +236,23 @@ class TestCaffe2Reference(unittest.TestCase):
         inputs = [data]
         c2_ref = c2_onnx.caffe2_net_reference(c2_init_net, c2_predict_net, inputs)
 
-        init_graph = c2_onnx.caffe2_net_to_onnx_graph(c2_init_net)
         predict_graph = c2_onnx.caffe2_net_to_onnx_graph(c2_predict_net)
+        # Test using separated init_graph
+        init_graph = c2_onnx.caffe2_net_to_onnx_graph(c2_init_net)
         c2_ir = c2.prepare(predict_graph, init_graph=init_graph)
         onnx_output = c2_ir.run(inputs)
         for blob_name in c2_ref.keys():
-            np.testing.assert_almost_equal(onnx_output[blob_name], c2_ref[blob_name], decimal=decimal)
+            np.testing.assert_almost_equal(
+                onnx_output[blob_name], c2_ref[blob_name], decimal=decimal)
+
+        # Test using initializers
+        initializers = c2_onnx.caffe2_init_net_to_initializers(c2_init_net)
+        predict_graph.initializer.extend(initializers)
+        c2_ir = c2.prepare(predict_graph)
+        onnx_output = c2_ir.run(inputs)
+        for blob_name in c2_ref.keys():
+            np.testing.assert_almost_equal(
+                onnx_output[blob_name], c2_ref[blob_name], decimal=decimal)
 
     def _download(self, model):
         model_dir = self.model_dir(model)

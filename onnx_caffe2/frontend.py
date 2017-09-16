@@ -5,12 +5,13 @@ To run this, you will need to have Caffe2 installed as well.
 
 import caffe2
 from caffe2.python import core, workspace
-from onnx import onnx_pb2, checker
+from onnx import onnx_pb2, checker, helper, numpy_helper
 from caffe2.proto import caffe2_pb2
 import onnx.defs
 from enum import Enum
 import contextlib
 import re
+import numpy as np
 
 # Special translators for operators that are different between Caffe2 and
 # ONNX. In most cases, this should be empty - as the effort of ONNX is
@@ -236,6 +237,33 @@ class NameMap(object):
             self.unique += 1
         # allowed to override!
         return self._add(name, mk())
+
+
+def caffe2_init_net_to_initializers(init_net):
+    initializers = []
+    for init_op in init_net.op:
+        assert not init_op.input
+        data_type_map = {
+            'GivenTensorFill': (onnx_pb2.TensorProto.FLOAT, 'floats', np.float32),
+            'GivenTensorInt64Fill': (onnx_pb2.TensorProto.INT64, 'ints', np.int64),
+            'GivenTensorIntFill': (onnx_pb2.TensorProto.INT32, 'ints', np.int32),
+            'GivenTensorBoolFill': (onnx_pb2.TensorProto.BOOL, 'ints', np.int32),
+        }
+        try:
+            data_type, field_name, np_type = data_type_map[init_op.type]
+        except KeyError:
+            raise RuntimeError(
+                "Can not translate init_net with operator '{}' to initializers".format(init_op.type)
+            )
+        args = {a.name: a for a in init_op.arg}
+        initializers.append(helper.make_tensor(
+            name=init_op.output[0],
+            data_type=data_type,
+            dims=args['shape'].ints,
+            vals=np.asarray(getattr(args['values'], field_name), dtype=np_type).tobytes(),
+            raw=True,
+        ))
+    return initializers
 
 
 def caffe2_net_to_onnx_graph(net_def):
