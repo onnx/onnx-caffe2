@@ -103,10 +103,14 @@ class Caffe2Rep(BackendRep):
                         for key, value in inputs.items():
                             workspace.FeedBlob(key, value)
                 elif isinstance(inputs, list) or isinstance(inputs, tuple):
-                    assert len(self.uninitialized) == len(inputs)
-                    for i, value in enumerate(inputs):
-                        # namescope already baked into protobuf
-                        workspace.FeedBlob(self.uninitialized[i], value)
+                    if len(self.uninitialized) == len(inputs):
+                        for i, value in enumerate(inputs):
+                            # namescope already baked into protobuf
+                            workspace.FeedBlob(self.uninitialized[i], value)
+                    else:
+                        # some (c2) models could fill input blobs in init_net as well
+                        for i, value in enumerate(inputs):
+                            workspace.FeedBlob(self.external_input[i], value)
                 else:
                     # single input
                     workspace.FeedBlob(self.uninitialized[0], inputs)
