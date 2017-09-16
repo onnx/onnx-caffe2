@@ -1,1 +1,5 @@
 *.pyc
+.cache/
+.coverage
+.eggs/
+onnx_caffe2.egg-info/
