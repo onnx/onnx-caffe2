@@ -243,25 +243,29 @@ def caffe2_init_net_to_initializers(init_net):
     initializers = []
     for init_op in init_net.op:
         assert not init_op.input
-        data_type_map = {
-            'GivenTensorFill': (onnx_pb2.TensorProto.FLOAT, 'floats', np.float32),
-            'GivenTensorInt64Fill': (onnx_pb2.TensorProto.INT64, 'ints', np.int64),
-            'GivenTensorIntFill': (onnx_pb2.TensorProto.INT32, 'ints', np.int32),
-            'GivenTensorBoolFill': (onnx_pb2.TensorProto.BOOL, 'ints', np.int32),
-        }
         try:
-            data_type, field_name, np_type = data_type_map[init_op.type]
+            data_type, field_name, np_type, raw = {
+                'GivenTensorFill': (onnx_pb2.TensorProto.FLOAT, 'floats', np.float32, True),
+                'GivenTensorInt64Fill': (onnx_pb2.TensorProto.INT64, 'ints', np.int64, True),
+                'GivenTensorIntFill': (onnx_pb2.TensorProto.INT32, 'ints', np.int32, True),
+                'GivenTensorBoolFill': (onnx_pb2.TensorProto.BOOL, 'ints', np.int32, True),
+                'GivenTensorStringFill': (onnx_pb2.TensorProto.STRING, 'strings', None, False),
+            }[init_op.type]
         except KeyError:
             raise RuntimeError(
                 "Can not translate init_net with operator '{}' to initializers".format(init_op.type)
             )
         args = {a.name: a for a in init_op.arg}
+        vals = getattr(args['values'], field_name)
+        if raw:
+            assert np_type
+            vals = np.asarray(vals, dtype=np_type).tobytes()
         initializers.append(helper.make_tensor(
             name=init_op.output[0],
             data_type=data_type,
             dims=args['shape'].ints,
-            vals=np.asarray(getattr(args['values'], field_name), dtype=np_type).tobytes(),
-            raw=True,
+            vals=vals,
+            raw=raw,
         ))
     return initializers
 
