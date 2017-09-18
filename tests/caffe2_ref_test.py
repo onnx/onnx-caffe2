@@ -265,7 +265,8 @@ class TestCaffe2Reference(unittest.TestCase):
             try:
                 downloadFromURLToFile(getURLFromName(model, f),
                                       '{folder}/{f}'.format(folder=model_dir,
-                                                            f=f))
+                                                            f=f),
+                                      show_progress=False)
             except Exception as e:
                 print("Abort: {reason}".format(reason=str(e)))
                 print("Cleaning up...")
