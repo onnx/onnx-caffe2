@@ -48,7 +48,7 @@ fi
 onnx_dir="$workdir/onnx"
 git clone "https://github.com/onnx/onnx.git" "$onnx_dir" --recursive
 pip install "$onnx_dir"
-pip install pytest-cov
+pip install pytest-cov psutil
 
 # run caffe2 tests
 cd "$workdir"
