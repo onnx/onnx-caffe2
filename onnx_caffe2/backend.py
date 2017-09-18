@@ -189,6 +189,9 @@ class Caffe2Backend(Backend):
                            TensorProto.INT64]:
             # TODO: Using this for FLOAT16 seems questionable
             arg.ints.extend(nptensor_data)
+        else:
+            raise RuntimeError(
+                'unrecognized tensor constant type {}'.format(data_type))
 
     @classmethod
     def _get_attribute_by_name(cls, node_def, name):
@@ -207,14 +210,20 @@ class Caffe2Backend(Backend):
             op_def.type = 'GivenTensorFill'
         elif init_tensor.data_type == TensorProto.INT64:
             op_def.type = 'GivenTensorInt64Fill'
-        elif init_tensor.data_type == TensorProto.INT32:
+        elif init_tensor.data_type in [TensorProto.UINT8,
+                                       TensorProto.INT8,
+                                       TensorProto.UINT16,
+                                       TensorProto.INT16,
+                                       TensorProto.INT32,
+                                       TensorProto.FLOAT16]:
             op_def.type = 'GivenTensorIntFill'
         elif init_tensor.data_type == TensorProto.BOOL:
             op_def.type = 'GivenTensorBoolFill'
         elif init_tensor.data_type == TensorProto.STRING:
             op_def.type = 'GivenTensorStringFill'
         else:
-            raise RuntimeError("unrecognized tensor constant type {}".format(init_tensor.data_type))
+            raise RuntimeError(
+                "unrecognized tensor constant type {}".format(init_tensor.data_type))
 
         values = op_def.arg.add()
         values.name = "values"
