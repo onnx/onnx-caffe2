@@ -292,6 +292,7 @@ class Caffe2Backend(Backend):
                 init_graph=None, **kwargs):
         '''
         For Onnx Caffe2Backend, we require that init_graph don't initialize the actual input of the predict_graph,
+
         for example, if "img" is the input blob for the predict_net, we require that in init_graph and in
         initializer of the predict_graph, "img" is not initalized. We don't have a check for this, since
         there is no way we can know which blob is the input of the predict_graph.
