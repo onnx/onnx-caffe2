@@ -84,7 +84,6 @@ class Workspace(object):
 class Caffe2Rep(BackendRep):
     def __init__(self, init_net, predict_net, device, workspace, uninitialized):
         super(Caffe2Rep, self).__init__()
-        self.init_net = init_net
         self.predict_net = predict_net
         self.device = device
         self.workspace = workspace
@@ -103,14 +102,12 @@ class Caffe2Rep(BackendRep):
                         for key, value in inputs.items():
                             workspace.FeedBlob(key, value)
                 elif isinstance(inputs, list) or isinstance(inputs, tuple):
-                    if len(self.uninitialized) == len(inputs):
-                        for i, value in enumerate(inputs):
-                            # namescope already baked into protobuf
-                            workspace.FeedBlob(self.uninitialized[i], value)
-                    else:
-                        # some (c2) models could fill input blobs in init_net as well
-                        for i, value in enumerate(inputs):
-                            workspace.FeedBlob(self.external_input[i], value)
+                    assert len(self.uninitialized) == len(inputs),
+                    'Caffe2Rep.Run: length of input must equal to the length of Uninitialized list: {},
+                    did you initialize the input of the graph in init_graph/initializer?'.format(self.uninitialized)
+                    for i, value in enumerate(inputs):
+                        # namescope already baked into protobuf
+                        workspace.FeedBlob(self.uninitialized[i], value)
                 else:
                     # single input
                     workspace.FeedBlob(self.uninitialized[0], inputs)
@@ -293,6 +290,12 @@ class Caffe2Backend(Backend):
     @classmethod
     def prepare(cls, predict_graph, device='CPU',
                 init_graph=None, **kwargs):
+        '''
+        For Onnx Caffe2Backend, we require that init_graph don't initialize the actual input of the predict_graph,
+        for example, if "img" is the input blob for the predict_net, we require that in init_graph or in
+        initializer of the predict_graph, "img" is not initalized. We don't have a check for this, since
+        there is no way we can know which blob is the input of the predict_graph.
+        '''
         super(Caffe2Backend, cls).prepare(predict_graph, device, **kwargs)
         if init_graph:
             checker.check_graph(init_graph)
