@@ -9,6 +9,7 @@ from __future__ import unicode_literals
 
 import contextlib
 import uuid
+from future.utils import bytes_to_native_str
 
 import caffe2
 from caffe2.python import core, workspace
@@ -285,9 +286,9 @@ class Caffe2Backend(Backend):
             # TODO: Hmm, this is going to mutate the original op_def.arg, isn't
             # it...
             new_pads = list(d['pads'].ints) * 2
-            d['pads'].ClearField(b'ints')
+            d['pads'].ClearField(bytes_to_native_str(b'ints'))
             d['pads'].ints.extend(new_pads)
-        op_def.ClearField(b'arg')
+        op_def.ClearField(bytes_to_native_str(b'arg'))
         op_def.arg.extend(d.values())
 
         return op_def
@@ -327,7 +328,7 @@ class Caffe2Backend(Backend):
 
         # TODO: turn me into a helper
         new_args = map(depluralize, op_def.arg)
-        op_def.ClearField(b'arg')
+        op_def.ClearField(bytes_to_native_str(b'arg'))
         op_def.arg.extend(new_args)
         return op_def
 
