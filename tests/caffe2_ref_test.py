@@ -217,6 +217,7 @@ class TestCaffe2Reference(unittest.TestCase):
         return os.path.join(models_dir, model)
 
     def _test_net(self, net_name, input_blob_dims=[1, 3, 224, 224], decimal=7):
+        print(net_name, psutil.virtual_memory())
         model_dir = self.model_dir(net_name)
         # predict net is stored as a protobuf text
         c2_predict_pb = os.path.join(model_dir, 'predict_net.pbtxt')
