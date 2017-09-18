@@ -82,7 +82,7 @@ class Workspace(object):
         self.ResetWorkspace()
 
 class Caffe2Rep(BackendRep):
-    def __init__(self, init_net, predict_net, device, workspace, uninitialized):
+    def __init__(self, predict_net, device, workspace, uninitialized):
         super(Caffe2Rep, self).__init__()
         self.predict_net = predict_net
         self.device = device
@@ -321,7 +321,7 @@ class Caffe2Backend(Backend):
             uninitialized = [x
                              for x in predict_net.external_input
                              if not workspace.HasBlob(x)]
-            return Caffe2Rep(init_net, predict_net, device, tmp_ws, uninitialized)
+            return Caffe2Rep(predict_net, device, tmp_ws, uninitialized)
 
     @classmethod
     def run_graph(cls, predict_graph, inputs, device='CPU',
