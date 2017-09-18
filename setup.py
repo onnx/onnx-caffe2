@@ -85,7 +85,7 @@ setup(
     description="Caffe2 frontend and backend of Open Neural Network Exchange",
     install_requires=install_requires,
     setup_requires=['pytest-runner'],
-    tests_require=['numpy', 'pytest-cov'],
+    tests_require=['numpy', 'pytest-cov', 'psutil'],
     cmdclass=cmdclass,
     packages=find_packages(),
     author='bddppq',
