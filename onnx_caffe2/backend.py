@@ -102,9 +102,9 @@ class Caffe2Rep(BackendRep):
                         for key, value in inputs.items():
                             workspace.FeedBlob(key, value)
                 elif isinstance(inputs, list) or isinstance(inputs, tuple):
-                    assert len(self.uninitialized) == len(inputs),
-                    'Caffe2Rep.Run: length of input must equal to the length of Uninitialized list: {},
-                    did you initialize the input of the graph in init_graph/initializer?'.format(self.uninitialized)
+                    assert len(self.uninitialized) == len(inputs), \
+                           'Caffe2Rep.Run: length of input must equal to the length of Uninitialized list: {}, \
+                            did you initialize the input of the graph in init_graph/initializer?'.format(self.uninitialized)
                     for i, value in enumerate(inputs):
                         # namescope already baked into protobuf
                         workspace.FeedBlob(self.uninitialized[i], value)
