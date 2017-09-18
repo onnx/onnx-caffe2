@@ -252,15 +252,23 @@ class TestCaffe2Reference(unittest.TestCase):
         os.makedirs(model_dir)
         for f in ['predict_net.pb', 'predict_net.pbtxt', 'init_net.pb']:
             try:
-                downloadFromURLToFile(getURLFromName(model, f),
-                                      '{folder}/{f}'.format(folder=model_dir,
-                                                            f=f),
-                                      show_progress=False)
+                try:
+                    downloadFromURLToFile(getURLFromName(model, f),
+                                          '{folder}/{f}'.format(folder=model_dir,
+                                                                f=f),
+                                          show_progress=False)
+                except TypeError:
+                    # show_progress not supported prior to
+                    # Caffe2 78c014e752a374d905ecfb465d44fa16e02a28f1
+                    # (Sep 17, 2017)
+                    downloadFromURLToFile(getURLFromName(model, f),
+                                          '{folder}/{f}'.format(folder=model_dir,
+                                                                f=f))
             except Exception as e:
                 print("Abort: {reason}".format(reason=str(e)))
                 print("Cleaning up...")
                 deleteDirectory(model_dir)
-                exit(0)
+                exit(1)
 
     def test_alexnet(self):
         model = 'bvlc_alexnet'
