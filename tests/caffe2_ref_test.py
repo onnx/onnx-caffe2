@@ -216,8 +216,8 @@ class TestCaffe2Reference(unittest.TestCase):
         models_dir = os.getenv('CAFFE2_MODELS', os.path.join(caffe2_home, 'models'))
         return os.path.join(models_dir, model)
 
-    def _test_net(self, net_name, input_blob_dims=[1, 3, 224, 224], decimal=7):
-        print(net_name, psutil.virtual_memory())
+    def _test_net(self, net_name, input_blob_dims=(1, 3, 224, 224), decimal=7):
+        print(net_name, '(_test_net starts):', psutil.virtual_memory())
         model_dir = self.model_dir(net_name)
         # predict net is stored as a protobuf text
         c2_predict_pb = os.path.join(model_dir, 'predict_net.pbtxt')
@@ -232,23 +232,24 @@ class TestCaffe2Reference(unittest.TestCase):
         with open(c2_init_pb, 'rb') as f:
             c2_init_net.ParseFromString(f.read())
         c2_init_net.name = net_name + '_init'
+        print(net_name, '(after loading net pb):', psutil.virtual_memory())
 
         n, c, h, w = input_blob_dims
         data = np.random.randn(n, c, h, w).astype(np.float32)
         inputs = [data]
         c2_ref = c2_onnx.caffe2_net_reference(c2_init_net, c2_predict_net, inputs)
+        print(net_name, '(random inputs generated):' psutil.virtual_memory())
 
-        print(net_name, psutil.virtual_memory())
         predict_graph = c2_onnx.caffe2_net_to_onnx_graph(c2_predict_net)
-        # Test using separated init_graph
-        init_graph = c2_onnx.caffe2_net_to_onnx_graph(c2_init_net)
-        c2_ir = c2.prepare(predict_graph, init_graph=init_graph)
-        onnx_output = c2_ir.run(inputs)
-        for blob_name in c2_ref.keys():
-            np.testing.assert_almost_equal(
-                onnx_output[blob_name], c2_ref[blob_name], decimal=decimal)
+        # # Test using separated init_graph
+        # init_graph = c2_onnx.caffe2_net_to_onnx_graph(c2_init_net)
+        # c2_ir = c2.prepare(predict_graph, init_graph=init_graph)
+        # onnx_output = c2_ir.run(inputs)
+        # for blob_name in c2_ref.keys():
+        #     np.testing.assert_almost_equal(
+        #         onnx_output[blob_name], c2_ref[blob_name], decimal=decimal)
+        # print(net_name, '(init_graph created):', psutil.virtual_memory())
 
-        print(net_name, psutil.virtual_memory())
         # Test using initializers
         initializers = c2_onnx.caffe2_init_net_to_initializers(c2_init_net)
         predict_graph.initializer.extend(initializers)
@@ -257,7 +258,8 @@ class TestCaffe2Reference(unittest.TestCase):
         for blob_name in c2_ref.keys():
             np.testing.assert_almost_equal(
                 onnx_output[blob_name], c2_ref[blob_name], decimal=decimal)
-        print(net_name, psutil.virtual_memory())
+
+        print(net_name, '(finished running):', psutil.virtual_memory())
 
     def _download(self, model):
         model_dir = self.model_dir(model)
