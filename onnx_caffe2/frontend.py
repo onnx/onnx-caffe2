@@ -249,6 +249,7 @@ def caffe2_init_net_to_initializers(init_net):
                 'GivenTensorInt64Fill': (onnx_pb2.TensorProto.INT64, 'ints', np.int64, True),
                 'GivenTensorIntFill': (onnx_pb2.TensorProto.INT32, 'ints', np.int32, True),
                 'GivenTensorBoolFill': (onnx_pb2.TensorProto.BOOL, 'ints', np.int32, True),
+                # raw_data can not be used to store strings
                 'GivenTensorStringFill': (onnx_pb2.TensorProto.STRING, 'strings', None, False),
             }[init_op.type]
         except KeyError:

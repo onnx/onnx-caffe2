@@ -238,7 +238,7 @@ class TestCaffe2Reference(unittest.TestCase):
         data = np.random.randn(n, c, h, w).astype(np.float32)
         inputs = [data]
         c2_ref = c2_onnx.caffe2_net_reference(c2_init_net, c2_predict_net, inputs)
-        print(net_name, '(random inputs generated):' psutil.virtual_memory())
+        print(net_name, '(random inputs generated):', psutil.virtual_memory())
 
         predict_graph = c2_onnx.caffe2_net_to_onnx_graph(c2_predict_net)
         # # Test using separated init_graph
