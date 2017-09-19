@@ -9,6 +9,7 @@ from __future__ import unicode_literals
 
 import contextlib
 import uuid
+from future.utils import bytes_to_native_str
 
 import caffe2
 from caffe2.python import core, workspace
@@ -127,9 +128,14 @@ class Caffe2Backend(Backend):
     # to unify the operator definitions.
     _renamed_operators = {
         'Dot': 'MatMul',
+        'Caffe2ConvTranspose': 'ConvTranspose',
+        'GlobalMaxPool': 'MaxPool',
+        'GlobalAveragePool': 'AveragePool',
     }
 
     # NB: domain is RENAMED operator names, not the originals
+    # TODO: Is this really coherent?  If multiple operators map to the
+    # same name, no way to implement divergent attribute renaming in this case.
     _renamed_attrs = {
         'Squeeze': {'axes': 'dims'},
         'Transpose': {'perm': 'axes'},
@@ -145,10 +151,13 @@ class Caffe2Backend(Backend):
     # function from ToffeIR node_def to caffe2 op_def
     _special_operators = {
         'Constant': '_create_constant',
-        'Caffe2ConvTranspose': '_create_transpose',
+        'Caffe2ConvTranspose': '_create_conv_transpose_unpool_base',
+        'Conv': '_create_conv_pool_op_base',
+        'AveragePool': '_create_conv_pool_op_base',
+        'GlobalAveragePool': '_create_conv_pool_op_base',
+        'GlobalMaxPool': '_create_conv_pool_op_base',
+        'MaxPool': '_create_conv_pool_op_base',
         'Reshape': '_create_reshape',
-        'GlobalAveragePool': '_create_global_pool_op',
-        'GlobalMaxPool': '_create_global_pool_op',
     }
     @classmethod
     def run_node(cls, node, inputs):
@@ -236,40 +245,102 @@ class Caffe2Backend(Backend):
 
         return op_def
 
+    # Note [Caffe2 ConvPoolOpBase]
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    # To understand what is going on here, we have to talk a little bit about
+    # Caffe2's internals.
+    #
+    # First, it's important to know that all of Caffe2's pooling and convolution
+    # operators inherit from "ConvPoolOpBase", which is an abstract class that
+    # defines all of the attributes (kernels, dilations, strides, etc) which one
+    # sees on these operators.  Unfortunately, Caffe2's documentation generator
+    # doesn't know how to handle cases like this, so for example, if you look at
+    # the docs for MaxPool at <https://caffe2.ai/docs/operators-catalogue.html#maxpool>
+    # you won't see any of the attributes.  You have to go source diving to
+    # find the information; in particular, you want to look at:
+    # https://github.com/caffe2/caffe2/blob/master/caffe2/operators/conv_pool_op_base.h
+    # This class handles *global* pooling as well.
+    #
+    # Second, it's important to know what Caffe2 expects for padding, which can
+    # be somewhat difficult to understand from the code because Caffe2 handles
+    # both singular/pluralized spellings of padding, and there is also legacy
+    # padding business.  The short version of the story is that, for NON-legacy
+    # padding (which is what we want to output), padding is expected to be
+    # *twice* the size of kernels.  So if you have a 2D convolution, Caffe2
+    # will accept two values in 'kernels', but FOUR values in 'pads';
+    # furthermore, this is *mandatory.*
+    #
+    # Finally, ConvPoolOpBase is not the only class of it's kind; there is
+    # also ConvTransposeUnpoolBase, which backs ConvTranspose.  So don't
+    # be tricked by the fact that Conv and ConvTranspose have similar
+    # parameters; they exercise different codepaths and need to be handled
+    # differently.
+
     @classmethod
-    def _create_transpose(cls, node_def, env):
-        op_def = caffe2_pb2.OperatorDef()
-        op_def.output.extend([env[o] for o in node_def.output])
-        op_def.input.extend([env[i] for i in node_def.input])
-        op_def.type = 'ConvTranspose'
-        op_def.name = node_def.name
+    def _create_conv_pool_op_base(cls, node_def, env):
+        op_def = cls._common_op_translator(node_def, env)
+
+        # NB: Don't forget to rename the operator to the correct thing in
+        # _renamed_operators
+        if node_def.op_type.startswith('Global'): # test against unrenamed!
+            global_pooling_attr = op_def.arg.add()
+            global_pooling_attr.name = 'global_pooling'
+            global_pooling_attr.i = 1
+
+        # TODO: Postel was wrong
+        # https://tools.ietf.org/html/draft-thomson-postel-was-wrong-00
+        # Please apply more stringent checks on these in onnx repo.
+
+        d = dict(map(lambda arg: (arg.name, arg), op_def.arg))
+        if 'kernels' in d and 'pads' in d and len(d['kernels'].ints) == len(d['pads'].ints):
+            # Caffe2 requires pads to be twice the size of kernels.
+            # TODO: Hmm, this is going to mutate the original op_def.arg, isn't
+            # it...
+            new_pads = list(d['pads'].ints) * 2
+            d['pads'].ClearField(bytes_to_native_str(b'ints'))
+            d['pads'].ints.extend(new_pads)
+        op_def.ClearField(bytes_to_native_str(b'arg'))
+        op_def.arg.extend(d.values())
+
+        return op_def
+
+    @classmethod
+    def _create_conv_transpose_unpool_base(cls, node_def, env):
+        op_def = cls._common_op_translator(node_def, env)
 
         def can_be_singular(values):
+            """
+            De-pluralization (collapsing kernels=(1,1) to kernel=1) is only possible
+            in a semantics-preserving way if all the elements are the same.
+            """
             if len(values) == 0:
                 return False
             return all(values[0] == v for v in values)
 
-        depluralizer = { 'kernel_shape': 'kernel', 'strides': 'stride', 'pads': 'pad' }
-        def map_attr(attr):
-            if attr.name in depluralizer:
+        depluralizer = { 'kernels': 'kernel', 'strides': 'stride', 'pads': 'pad' }
+        def depluralize(arg):
+            if arg.name in depluralizer:
                 # TODO: replace this with a version test
-                if not can_be_singular(attr.ints):
-                    raise "Caffe2 doesn't support plural kernel_shape/strides/pads prior to 6cb4d1ecb0dfb553f797f6a8a61dd6966909cb0b; if you know your Caffe2 is recent enough, comment out this test"
-                # In fact, this code is MANDATORY, because prior to
+                if not can_be_singular(arg.ints):
+                    raise "Caffe2 doesn't support plural kernels/strides/pads prior to 6cb4d1ecb0dfb553f797f6a8a61dd6966909cb0b; if you know your Caffe2 is recent enough, comment out this test"
+                # NB: this code is MANDATORY, because prior to
                 # https://github.com/caffe2/caffe2/commit/6cb4d1ecb0dfb553f797f6a8a61dd6966909cb0b
                 # the pluralized versions were not supported.
                 # You'll get an error like
                 # "[enforce fail at conv_transpose_unpool_op_base.h:54] kernel_h_ > 0"
                 # if your Caffe2 is too old and you actually use the plural
-                # version
-                singular_attr = AttributeProto()
-                singular_attr.name = depluralizer[attr.name]
-                singular_attr.i = attr.ints[0]
-                return cls._onnx_arg_to_caffe2_arg(op_def.type, singular_attr)
+                # version.  See Note [Caffe2 ConvPoolOpBase] for more context.
+                singular_arg = caffe2_pb2.Argument()
+                singular_arg.name = depluralizer[arg.name]
+                singular_arg.i = arg.ints[0]
+                return singular_arg
             else:
-                return cls._onnx_arg_to_caffe2_arg(op_def.type, attr)
+                return arg
 
-        op_def.arg.extend([map_attr(attr) for attr in node_def.attribute])
+        # TODO: turn me into a helper
+        new_args = map(depluralize, op_def.arg)
+        op_def.ClearField(bytes_to_native_str(b'arg'))
+        op_def.arg.extend(new_args)
         return op_def
 
     @classmethod
@@ -281,19 +352,6 @@ class Caffe2Backend(Backend):
         op_def.type = 'Reshape'
         op_def.name = node_def.name
         op_def.arg.extend(map(lambda x: cls._onnx_arg_to_caffe2_arg(op_def.type, x), node_def.attribute))
-        return op_def
-
-    @classmethod
-    def _create_global_pool_op(cls, node_def, env):
-        op_def = cls._common_op_translator(node_def, env)
-
-        assert node_def.op_type.startswith('Global')
-        op_def.type = node_def.op_type.split('Global')[-1]
-
-        global_pooling_attr = op_def.arg.add()
-        global_pooling_attr.name = 'global_pooling'
-        global_pooling_attr.i = 1
-
         return op_def
 
     @classmethod
@@ -381,6 +439,19 @@ class Caffe2Backend(Backend):
 
     @classmethod
     def _common_op_translator(cls, node_def, env):
+        """
+        This translator performs the basic translation of ONNX nodes into
+        Caffe2 operators.  Besides doing a straightforward marshalling from
+        one format to another, it also does these extra things:
+
+          - Renames operators based on '_renamed_operators'
+          - Renames attributes based on '_renamed_attrs'
+          - Handles "consumed_inputs" attribute so that inplace operations are
+            encoded correctly in Caffe2.
+
+        If you're writing a custom translator, consider calling this first,
+        and then fixing things up further.
+        """
         op_def = caffe2_pb2.OperatorDef()
         op_def.input.extend([env[i] for i in node_def.input])
 
