@@ -152,6 +152,7 @@ class Caffe2Backend(Backend):
         'Constant': '_create_constant',
         'Caffe2ConvTranspose': '_create_conv_transpose_unpool_base',
         'Conv': '_create_conv_pool_op_base',
+        'AveragePool': '_create_conv_pool_op_base',
         'GlobalAveragePool': '_create_conv_pool_op_base',
         'GlobalMaxPool': '_create_conv_pool_op_base',
         'MaxPool': '_create_conv_pool_op_base',
