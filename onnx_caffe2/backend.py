@@ -307,10 +307,10 @@ class Caffe2Backend(Backend):
             return all(values[0] == v for v in values)
 
         depluralizer = { 'kernels': 'kernel', 'strides': 'stride', 'pads': 'pad' }
-        def depluralize(attr):
-            if attr.name in depluralizer:
+        def depluralize(arg):
+            if arg.name in depluralizer:
                 # TODO: replace this with a version test
-                if not can_be_singular(attr.ints):
+                if not can_be_singular(arg.ints):
                     raise "Caffe2 doesn't support plural kernels/strides/pads prior to 6cb4d1ecb0dfb553f797f6a8a61dd6966909cb0b; if you know your Caffe2 is recent enough, comment out this test"
                 # NB: this code is MANDATORY, because prior to
                 # https://github.com/caffe2/caffe2/commit/6cb4d1ecb0dfb553f797f6a8a61dd6966909cb0b
@@ -319,12 +319,12 @@ class Caffe2Backend(Backend):
                 # "[enforce fail at conv_transpose_unpool_op_base.h:54] kernel_h_ > 0"
                 # if your Caffe2 is too old and you actually use the plural
                 # version.  See Note [Caffe2 ConvPoolOpBase] for more context.
-                singular_attr = caffe2_pb2.Argument()
-                singular_attr.name = depluralizer[attr.name]
-                singular_attr.i = attr.ints[0]
-                return singular_attr
+                singular_arg = caffe2_pb2.Argument()
+                singular_arg.name = depluralizer[arg.name]
+                singular_arg.i = arg.ints[0]
+                return singular_arg
             else:
-                return attr
+                return arg
 
         # TODO: turn me into a helper
         new_args = map(depluralize, op_def.arg)
