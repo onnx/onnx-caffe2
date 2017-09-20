@@ -6,7 +6,7 @@ source "$scripts_dir/common";
 [[ -n "$CAFFE2_VERSION" ]] || die "CAFFE2_VERSION not set"
 
 onnx_c2_dir="$PWD"
-pip install $onnx_c2_dir
+pip install -e $onnx_c2_dir
 
 # setup caffe2
 c2_dir="$workdir/caffe2"
@@ -51,5 +51,5 @@ pip install "$onnx_dir"
 pip install pytest-cov psutil
 
 # run caffe2 tests
-cd "$workdir"
-pytest -s "$onnx_c2_dir/tests/caffe2_ref_test.py"
+cd "$onnx_c2_dir"
+pytest -s
