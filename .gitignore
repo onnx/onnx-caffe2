@@ -3,3 +3,4 @@
 .coverage
 .eggs/
 onnx_caffe2.egg-info/
+onnx_caffe2/version.py
