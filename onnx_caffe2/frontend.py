@@ -3,14 +3,22 @@
 To run this, you will need to have Caffe2 installed as well.
 """
 
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+from __future__ import unicode_literals
+
+import contextlib
+import re
+
 import caffe2
 from caffe2.python import core, workspace
-from onnx import onnx_pb2, checker, helper, numpy_helper
+from onnx import onnx_pb2, checker, numpy_helper
+from onnx.helper import make_tensor
+from onnx_caffe2.helper import make_model
 from caffe2.proto import caffe2_pb2
 import onnx.defs
 from enum import Enum
-import contextlib
-import re
 import numpy as np
 
 # Special translators for operators that are different between Caffe2 and
@@ -261,7 +269,7 @@ def caffe2_init_net_to_initializers(init_net):
         if raw:
             assert np_type
             vals = np.asarray(vals, dtype=np_type).tobytes()
-        initializers.append(helper.make_tensor(
+        initializers.append(make_tensor(
             name=init_op.output[0],
             data_type=data_type,
             dims=args['shape'].ints,
@@ -271,13 +279,12 @@ def caffe2_init_net_to_initializers(init_net):
     return initializers
 
 
-def caffe2_net_to_onnx_graph(net_def):
-    if not net_def:
-        return None
-    graph_def = onnx_pb2.GraphProto()
+def caffe2_net_to_onnx_model(net_def):
+    return make_model(caffe2_net_to_onnx_graph(net_def))
 
-    # to pass the check HasField('version')
-    graph_def.ir_version = onnx_pb2.IR_VERSION
+
+def caffe2_net_to_onnx_graph(net_def):
+    graph_def = onnx_pb2.GraphProto()
 
     graph_def.name = net_def.name
     # This is a mapping from Caffe2 names to ONNX names

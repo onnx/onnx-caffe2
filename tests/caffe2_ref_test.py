@@ -12,7 +12,9 @@ from caffe2.python import brew
 from caffe2.python.model_helper import ModelHelper
 
 import onnx
-from onnx import helper
+from onnx.helper import make_node, make_graph, make_tensor
+from onnx_caffe2.helper import make_model
+
 from onnx import onnx_pb2
 import onnx_caffe2.frontend as c2_onnx
 import onnx_caffe2.backend as c2
@@ -22,24 +24,26 @@ import numpy as np
 import google.protobuf.text_format
 from caffe2.python.models.download import downloadFromURLToFile, getURLFromName, deleteDirectory
 
+from onnx_caffe2.helper import make_model
+
 
 class TestCaffe2Basic(unittest.TestCase):
     def setUp(self):
         np.random.seed(seed=0)
 
     def test_relu_node_inplace(self):
-        node_def = helper.make_node(
+        node_def = make_node(
             "Relu", ["X"], ["Y"], consumed_inputs=[1])
         X = np.random.randn(3, 2).astype(np.float32)
         output = c2.run_node(
             node_def, {"X": X})
-        graph_def = helper.make_graph(
+        graph_def = make_graph(
             [node_def],
             name="test",
             inputs=["X"],
             outputs=["X", "Y"])
         Y_ref = np.clip(X, 0, np.inf)
-        c2_rep = c2.prepare(graph_def)
+        c2_rep = c2.prepare(make_model(graph_def))
         output = c2_rep.run({"X": X})
         # With the inplace change from Zach, there shouldn't be Y
         # np.testing.assert_almost_equal(output["Y"], Y_ref)
@@ -50,15 +54,15 @@ class TestCaffe2Basic(unittest.TestCase):
     def test_relu_graph(self):
         inputs = ['X']
         outputs = ['Y']
-        graph_def = helper.make_graph(
-            [helper.make_node("Relu", inputs, outputs)],
+        graph_def = make_graph(
+            [make_node("Relu", inputs, outputs)],
             name="test",
             inputs=inputs,
             outputs=outputs)
         X = np.random.randn(3, 2).astype(np.float32)
         Y_ref = np.clip(X, 0, np.inf)
         # Testing with a list
-        c2_rep = c2.prepare(graph_def)
+        c2_rep = c2.prepare(make_model(graph_def))
         output = c2_rep.run({"X": X})
         np.testing.assert_almost_equal(output["Y"], Y_ref)
 
@@ -66,23 +70,24 @@ class TestCaffe2Basic(unittest.TestCase):
         X = np.array([[1, 2], [3, 4]]).astype(np.float32)
         Y = np.array([[1, 2], [3, 4]]).astype(np.float32)
         weight = np.array([[1, 0], [0, 1]])
-        graph_def = helper.make_graph(
-            [helper.make_node("Add", ["X", "Y"], ["Z0"]),
-             helper.make_node("Cast", ["Z0"], ["Z"], to="float"),
-             helper.make_node("Mul", ["Z", "weight"], ["W"]),
-             helper.make_node("Tanh", ["W"], ["W"]),
-             helper.make_node("Sigmoid", ["W"], ["W"]),
-             helper.make_node("Scale", ["W"], ["W"], scale=-1.0)],
+        graph_def = make_graph(
+            [make_node("Add", ["X", "Y"], ["Z0"]),
+             make_node("Cast", ["Z0"], ["Z"], to="float"),
+             make_node("Mul", ["Z", "weight"], ["W"]),
+             make_node("Tanh", ["W"], ["W"]),
+             make_node("Sigmoid", ["W"], ["W"]),
+             make_node("Scale", ["W"], ["W"], scale=-1.0)],
             name="test_initializer",
             inputs=["X", "Y", "weight"],
             outputs=["W"],
-            initializer=[helper.make_tensor("weight", onnx_pb2.TensorProto.FLOAT, [2, 2], weight.flatten().astype(float))]
+            initializer=[make_tensor("weight", onnx_pb2.TensorProto.FLOAT, [2, 2], weight.flatten().astype(float))]
         )
+
         def sigmoid(x):
             return 1 / (1 + np.exp(-x))
 
         W_ref = -sigmoid(np.tanh((X + Y) * weight))
-        c2_rep = c2.prepare(graph_def)
+        c2_rep = c2.prepare(make_model(graph_def))
         output = c2_rep.run({"X": X, "Y": Y})
         np.testing.assert_almost_equal(output["W"], W_ref)
 
@@ -120,7 +125,7 @@ class TestCaffe2End2End(unittest.TestCase):
         c2_ref = c2_onnx.caffe2_net_reference(c2_init_net, c2_predict_net, inputs)
         print(net_name, '(random inputs generated):', psutil.virtual_memory())
 
-        predict_graph = c2_onnx.caffe2_net_to_onnx_graph(c2_predict_net)
+        predict_model = c2_onnx.caffe2_net_to_onnx_model(c2_predict_net)
         # # Test using separated init_graph
         # init_graph = c2_onnx.caffe2_net_to_onnx_graph(c2_init_net)
         # c2_ir = c2.prepare(predict_graph, init_graph=init_graph)
@@ -132,8 +137,8 @@ class TestCaffe2End2End(unittest.TestCase):
 
         # Test using initializers
         initializers = c2_onnx.caffe2_init_net_to_initializers(c2_init_net)
-        predict_graph.initializer.extend(initializers)
-        c2_ir = c2.prepare(predict_graph)
+        predict_model.graph.initializer.extend(initializers)
+        c2_ir = c2.prepare(predict_model)
         onnx_output = c2_ir.run(inputs)
         for blob_name in c2_ref.keys():
             np.testing.assert_almost_equal(
