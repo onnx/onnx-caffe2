@@ -71,7 +71,7 @@ cmdclass={
 # Dependencies
 ################################################################################
 
-install_requires = []
+install_requires = ['click']
 if sys.version_info < (3, 4):
     install_requires.append('enum34')
 
@@ -91,4 +91,10 @@ setup(
     author='bddppq',
     author_email='jbai@fb.com',
     url='https://github.com/onnx/onnx-caffe2',
+    entry_points={
+        'console_scripts': [
+            'convert-caffe2-to-onnx = onnx_caffe2.bin.conversion:caffe2_to_onnx',
+            'convert-onnx-to-caffe2 = onnx_caffe2.bin.conversion:onnx_to_caffe2'
+        ]
+    },
 )

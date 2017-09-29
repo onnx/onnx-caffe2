@@ -8,15 +8,12 @@ from __future__ import division
 from __future__ import print_function
 from __future__ import unicode_literals
 
-import contextlib
 import re
 
 import caffe2
-from caffe2.python import core, workspace
 from onnx import onnx_pb2, checker, numpy_helper
 import onnx.helper
 from onnx_caffe2.helper import make_model
-from caffe2.proto import caffe2_pb2
 import onnx.defs
 from enum import Enum
 import numpy as np
@@ -247,8 +244,8 @@ class NameMap(object):
         return self._add(name, mk())
 
 
-def caffe2_init_net_to_initializers(init_net):
-    initializers = []
+def caffe2_init_net_to_initializer(init_net):
+    initializer = []
     for init_op in init_net.op:
         assert not init_op.input
         try:
@@ -262,25 +259,27 @@ def caffe2_init_net_to_initializers(init_net):
             }[init_op.type]
         except KeyError:
             raise RuntimeError(
-                "Can not translate init_net with operator '{}' to initializers".format(init_op.type)
+                "Can not translate init_net with operator '{}' to initializer".format(init_op.type)
             )
         args = {a.name: a for a in init_op.arg}
         vals = getattr(args['values'], field_name)
         if raw:
             assert np_type
             vals = np.asarray(vals, dtype=np_type).tobytes()
-        initializers.append(onnx.helper.make_tensor(
+        initializer.append(onnx.helper.make_tensor(
             name=init_op.output[0],
             data_type=data_type,
             dims=args['shape'].ints,
             vals=vals,
             raw=raw,
         ))
-    return initializers
+    return initializer
 
 
 def caffe2_net_to_onnx_model(net_def):
-    return make_model(caffe2_net_to_onnx_graph(net_def))
+    model_def = make_model(caffe2_net_to_onnx_graph(net_def))
+    checker.check_model(model_def)
+    return model_def
 
 
 def caffe2_net_to_onnx_graph(net_def):
@@ -295,42 +294,3 @@ def caffe2_net_to_onnx_graph(net_def):
     graph_def.output.extend(map(name_map.rename, net_def.external_output))
     checker.check_graph(graph_def)
     return graph_def
-
-
-@contextlib.contextmanager
-def _caffe2_workspace(name=b"caffe2_ws"):
-    old_ws_name = workspace.CurrentWorkspace()
-    workspace.SwitchWorkspace(name, True)
-    yield
-    workspace.ResetWorkspace()
-    workspace.SwitchWorkspace(old_ws_name)
-
-def op_def_reference(op_def, inputs):
-    with _caffe2_workspace():
-        if type(inputs) is dict:
-            for key, value in inputs.items():
-                workspace.FeedBlob(key, value)
-        else:
-            assert(len(op_def.input) == len(inputs))
-            for key, value in zip(op_def.input, inputs):
-                workspace.FeedBlob(key, value)
-        workspace.RunOperatorOnce(op_def)
-        return dict(
-            (name, workspace.FetchBlob(name))
-            for name in op_def.output)
-
-def caffe2_net_reference(init_net, predict_net, inputs):
-    with _caffe2_workspace():
-        if init_net:
-            workspace.RunNetOnce(init_net)
-        if type(inputs) is dict:
-            for key, value in inputs.items():
-                workspace.FeedBlob(key, value)
-        else:
-            uninitialized = filter(lambda x: not workspace.HasBlob(x), predict_net.external_input)
-            for key, value in zip(uninitialized, inputs):
-                workspace.FeedBlob(key, value)
-        workspace.RunNetOnce(predict_net)
-        return dict(
-            (name, workspace.FetchBlob(name))
-            for name in predict_net.external_output)

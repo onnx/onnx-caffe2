@@ -214,40 +214,50 @@ class Caffe2Backend(Backend):
                 return attr
         raise IndexError('onnx node has no attribute ' + name)
 
-    @classmethod
-    def _create_constant(cls, node_def, env):
-        op_def = caffe2_pb2.OperatorDef()
-        op_def.output.extend([env[o] for o in node_def.output])
 
-        init_tensor = cls._get_attribute_by_name(node_def, 'value').t
-        if init_tensor.data_type == TensorProto.FLOAT:
+    @classmethod
+    def _create_tensor_filling_op(cls, tensor_proto, name=None):
+        assert name or tensor_proto.name
+        name = name or tensor_proto.name
+
+        op_def = caffe2_pb2.OperatorDef()
+        op_def.output.append(name)
+
+        if tensor_proto.data_type == TensorProto.FLOAT:
             op_def.type = 'GivenTensorFill'
-        elif init_tensor.data_type == TensorProto.INT64:
+        elif tensor_proto.data_type == TensorProto.INT64:
             op_def.type = 'GivenTensorInt64Fill'
-        elif init_tensor.data_type in [TensorProto.UINT8,
+        elif tensor_proto.data_type in [TensorProto.UINT8,
                                        TensorProto.INT8,
                                        TensorProto.UINT16,
                                        TensorProto.INT16,
                                        TensorProto.INT32,
                                        TensorProto.FLOAT16]:
             op_def.type = 'GivenTensorIntFill'
-        elif init_tensor.data_type == TensorProto.BOOL:
+        elif tensor_proto.data_type == TensorProto.BOOL:
             op_def.type = 'GivenTensorBoolFill'
-        elif init_tensor.data_type == TensorProto.STRING:
+        elif tensor_proto.data_type == TensorProto.STRING:
             op_def.type = 'GivenTensorStringFill'
         else:
             raise RuntimeError(
-                "unrecognized tensor constant type {}".format(init_tensor.data_type))
+                "unrecognized tensor constant type {}".format(tensor_proto.data_type))
 
         values = op_def.arg.add()
         values.name = "values"
 
-        cls.fill_values(values, init_tensor)
+        cls.fill_values(values, tensor_proto)
         shape = op_def.arg.add()
         shape.name = "shape"
-        shape.ints.extend(init_tensor.dims)
+        shape.ints.extend(tensor_proto.dims)
 
         return op_def
+
+    @classmethod
+    def _create_constant(cls, node_def, env):
+        assert len(node_def.output) == 1
+        output_name = env[node_def.output[0]]
+        init_tensor = cls._get_attribute_by_name(node_def, 'value').t
+        return cls._create_tensor_filling_op(init_tensor, output_name)
 
     # Note [Caffe2 ConvPoolOpBase]
     # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -375,15 +385,15 @@ class Caffe2Backend(Backend):
         ws = Workspace()
         device = Device(device)
 
-        predict_net, _ = cls._onnx_graph_to_caffe2_net(predict_model.graph)
+        predict_net, _ = cls.onnx_graph_to_caffe2_net(predict_model.graph)
         predict_net.device_option.CopyFrom(get_device_option(device))
 
         with ws, core.DeviceScope(get_device_option(device)):
             for init_tensor in predict_model.graph.initializer:
                 workspace.FeedBlob(init_tensor.name, to_array(init_tensor))
             if init_model:
-                init_net, _ = cls._onnx_graph_to_caffe2_net(init_model.graph)
-                workspaces.RunNetOnce(init_net)
+                init_net, _ = cls.onnx_graph_to_caffe2_net(init_model.graph)
+                workspace.RunNetOnce(init_net)
             uninitialized = [x
                              for x in predict_net.external_input
                              if not workspace.HasBlob(x)]
@@ -481,7 +491,7 @@ class Caffe2Backend(Backend):
 
 
     @classmethod
-    def _onnx_graph_to_caffe2_net(cls, graph_def):
+    def onnx_graph_to_caffe2_net(cls, graph_def):
 
         # This is a hotfix to handle caffe2 frontend which sometimes
         # creates ONNX graphs with edges which are not declared anywhere.
@@ -511,6 +521,13 @@ class Caffe2Backend(Backend):
         net_def.external_input.extend(graph_def.input)
         net_def.external_output.extend([env[o] for o in graph_def.output])
         return net_def, env
+
+    @classmethod
+    def onnx_initializer_to_caffe2_init_net(cls, initializer, init_net_name='init'):
+        net_def = caffe2_pb2.NetDef()
+        net_def.name = init_net_name
+        net_def.op.extend(cls._create_tensor_filling_op(tp) for tp in initializer)
+        return net_def
 
 
 prepare = Caffe2Backend.prepare
