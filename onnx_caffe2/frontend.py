@@ -24,7 +24,8 @@ import numpy as np
 _special_translator = {}
 
 # caffe2 arguments that needs to be removed
-_blacklist_caffe2_args = {'order', 'global_pooling'}
+_blacklist_caffe2_args = {'order', 'global_pooling',
+                          'cudnn_exhaustive_search', 'use_cudnn'}
 
 # expected argument values
 _expected_arg_values = {'order': [b'NCHW'], 'global_pooling': [1]}

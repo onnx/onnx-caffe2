@@ -26,9 +26,6 @@ from test_utils import TestCase
 
 
 class TestCaffe2Basic(TestCase):
-    def setUp(self):
-        np.random.seed(seed=0)
-
     def test_relu_node_inplace(self):
         node_def = make_node(
             "Relu", ["X"], ["Y"], consumed_inputs=[1])

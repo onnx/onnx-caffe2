@@ -10,6 +10,9 @@ import psutil
 
 
 class TestCase(unittest.TestCase):
+    def setUp(self):
+        np.random.seed(seed=0)
+
     def assertSameOutputs(self, outputs1, outputs2, decimal=7):
         self.assertEqual(len(outputs1), len(outputs2))
         for o1, o2 in zip(outputs1, outputs2):

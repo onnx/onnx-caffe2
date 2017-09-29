@@ -20,7 +20,7 @@ import onnx_caffe2.frontend as c2_onnx
 @click.option('--caffe2-net', required=True,
               type=click.File('rb'),
               help="Path of the caffe2 net pb file")
-@click.option('--caffe2-net-name', required=True,
+@click.option('--caffe2-net-name',
               type=str,
               help="Name of the caffe2 net")
 @click.option('--caffe2-init-net',
@@ -35,7 +35,11 @@ def caffe2_to_onnx(caffe2_net,
                    output):
     c2_net_proto = caffe2_pb2.NetDef()
     c2_net_proto.ParseFromString(caffe2_net.read())
-    c2_net_proto.name = caffe2_net_name
+    if not c2_net_proto.name and not caffe2_net_name:
+        raise click.BadParameter(
+            'The input caffe2 net does not have name, '
+            '--caffe2-net-name must be provided')
+    c2_net_proto.name = caffe2_net_name or c2_net_proto.name
     onnx_model = c2_onnx.caffe2_net_to_onnx_model(c2_net_proto)
 
     if caffe2_init_net:
