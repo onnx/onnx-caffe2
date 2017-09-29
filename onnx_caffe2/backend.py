@@ -19,7 +19,6 @@ from onnx import onnx_pb2, checker
 from onnx.onnx_pb2 import TensorProto, AttributeProto
 import onnx.numpy_helper
 import onnx.defs
-
 from onnx.backend.base import Backend, BackendRep, Device, DeviceType, namedtupledict
 
 
@@ -59,14 +58,17 @@ class Workspace(object):
         self.workspace_id = str(uuid.uuid4())
         # A stack, so that the context manager is reentrant.
         self.workspace_stack = []
+
     def __getattr__(self, attr):
         def f(*args, **kwargs):
             with self:
                 return getattr(workspace, attr)(*args, **kwargs)
         return f
+
     def __enter__(self):
         self.workspace_stack.append(workspace.CurrentWorkspace())
         workspace.SwitchWorkspace(self.workspace_id, create_if_missing=True)
+
     def __exit__(self, exc_type, exc_value, traceback):
         w = self.workspace_stack.pop()
         # Strictly speaking, create_if_missing here is unnecessary, since a user
@@ -77,6 +79,7 @@ class Workspace(object):
         # to a default workspace which no longer exists.  create_if_missing=True
         # will (harmlessly) recreate the workspace before we finally quit.)
         workspace.SwitchWorkspace(w, create_if_missing=True)
+
     def __del__(self):
         # NB: This is a 'self' call because we need to switch into the workspace
         # we want to reset before we actually reset it.  A direct call to
@@ -355,8 +358,8 @@ class Caffe2Backend(Backend):
         return c2_op
 
     @classmethod
-    def prepare(cls, predict_graph, device='CPU',
-                init_graph=None, **kwargs):
+    def prepare(cls, predict_model, device='CPU',
+                init_model=None, **kwargs):
         '''
         For Onnx Caffe2Backend, we require that init_graph don't initialize the actual input of the predict_graph,
 
@@ -364,39 +367,27 @@ class Caffe2Backend(Backend):
         initializer of the predict_graph, "img" is not initalized. We don't have a check for this, since
         there is no way we can know which blob is the input of the predict_graph.
         '''
-        super(Caffe2Backend, cls).prepare(predict_graph, device, **kwargs)
-        if init_graph:
-            checker.check_graph(init_graph)
+        super(Caffe2Backend, cls).prepare(predict_model, device, **kwargs)
+        if init_model:
+            checker.check_model(init_model)
 
-        tmp_ws = Workspace()
+        ws = Workspace()
+        device = Device(device)
 
-        with tmp_ws:
-            device = Device(device)
+        predict_net, _ = cls._onnx_graph_to_caffe2_net(predict_model.graph)
+        predict_net.device_option.CopyFrom(get_device_option(device))
 
-            if init_graph:
-                init_net, _ = cls._onnx_graph_to_caffe2_net(init_graph)
-            else:
-                init_net = caffe2_pb2.NetDef()
-
-            predict_net, _ = cls._onnx_graph_to_caffe2_net(predict_graph)
-            predict_net.device_option.CopyFrom(get_device_option(device))
-
-            with core.DeviceScope(get_device_option(device)):
-                for init_tensor in predict_graph.initializer:
-                    workspace.FeedBlob(init_tensor.name, onnx.numpy_helper.to_array(init_tensor))
-                workspace.RunNetOnce(init_net)
+        with ws, core.DeviceScope(get_device_option(device)):
+            for init_tensor in predict_model.graph.initializer:
+                workspace.FeedBlob(init_tensor.name, onnx.numpy_helper.to_array(init_tensor))
+            if init_model:
+                init_net, _ = cls._onnx_graph_to_caffe2_net(init_model.graph)
+                workspaces.RunNetOnce(init_net)
             uninitialized = [x
                              for x in predict_net.external_input
                              if not workspace.HasBlob(x)]
-            return Caffe2Rep(predict_net, device, tmp_ws, uninitialized)
 
-    @classmethod
-    def run_graph(cls, predict_graph, inputs, device='CPU',
-                  init_graph=None,
-                  **kwargs):
-        super(Caffe2Backend, cls).run_graph(predict_graph, inputs, device, **kwargs)
-        c2_rep = cls.prepare(predict_graph, device, init_graph)
-        return c2_rep.run(inputs)
+        return Caffe2Rep(predict_net, device, ws, uninitialized)
 
     @classmethod
     # TODO: This method needs a refactor for clarity
@@ -497,8 +488,8 @@ class Caffe2Backend(Backend):
         return net_def, env
 
 
-run_node = Caffe2Backend.run_node
-
 prepare = Caffe2Backend.prepare
 
-run_graph = Caffe2Backend.run_graph
+run_node = Caffe2Backend.run_node
+
+run_model = Caffe2Backend.run_model
