@@ -14,7 +14,7 @@ import re
 import caffe2
 from caffe2.python import core, workspace
 from onnx import onnx_pb2, checker, numpy_helper
-from onnx.helper import make_tensor
+import onnx.helper
 from onnx_caffe2.helper import make_model
 from caffe2.proto import caffe2_pb2
 import onnx.defs
@@ -269,7 +269,7 @@ def caffe2_init_net_to_initializers(init_net):
         if raw:
             assert np_type
             vals = np.asarray(vals, dtype=np_type).tobytes()
-        initializers.append(make_tensor(
+        initializers.append(onnx.helper.make_tensor(
             name=init_op.output[0],
             data_type=data_type,
             dims=args['shape'].ints,
