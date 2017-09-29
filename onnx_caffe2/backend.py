@@ -14,9 +14,10 @@ from future.utils import bytes_to_native_str
 import caffe2
 from caffe2.python import core, workspace
 from caffe2.proto import caffe2_pb2
+import caffe2.python.utils
 from onnx import onnx_pb2, checker
 from onnx.onnx_pb2 import TensorProto, AttributeProto
-from onnx.numpy_helper import to_array
+import onnx.numpy_helper
 import onnx.defs
 from onnx.backend.base import Backend, BackendRep, Device, DeviceType, namedtupledict
 
@@ -25,6 +26,7 @@ def get_device_option(device):
     m = {DeviceType.CPU: caffe2_pb2.CPU,
          DeviceType.CUDA: caffe2_pb2.CUDA}
     return core.DeviceOption(m[device.type], device.device_id)
+
 
 def get_name_scope(device):
     if device.type == DeviceType.CUDA:
@@ -124,6 +126,68 @@ class Caffe2Rep(BackendRep):
             return namedtupledict('Outputs', predict_net.external_output)(*output_values)
 
 
+class OnnxAttributes(dict):
+    """
+    This is a more convenient way to work with ONNX/Caffe2 attributes
+    that is not the protobuf representation.
+    """
+    @staticmethod
+    def from_onnx(args):
+        d = OnnxAttributes()
+        for arg in args:
+            d[arg.name] = convertAttributeProto(arg)
+        return d
+    def caffe2(self, kmap=lambda k: k):
+        for k, v in self.items():
+            yield caffe2.python.utils.MakeArgument(kmap(k), v)
+
+
+# TODO: Move this into ONNX main library
+def convertAttributeProto(onnx_arg):
+    """
+    Convert an ONNX AttributeProto into an appropriate Python object
+    for the type.
+
+    NB: Tensor attribute gets returned as the straight proto.
+    """
+    if onnx_arg.HasField('f'):
+        return onnx_arg.f
+    elif onnx_arg.HasField('i'):
+        return onnx_arg.i
+    elif onnx_arg.HasField('s'):
+        return onnx_arg.s
+    elif onnx_arg.HasField('t'):
+        return onnx_arg.t  # this is a proto!
+    elif len(onnx_arg.floats):
+        return list(onnx_arg.floats)
+    elif len(onnx_arg.ints):
+        return list(onnx_arg.ints)
+    elif len(onnx_arg.strings):
+        return list(onnx_arg.strings)
+    else:
+        raise ValueError("Unsupported ONNX attribute: {}".format(onnx_arg))
+
+
+# TODO: Move this into ONNX main library
+class OnnxNode(object):
+    """
+    Reimplementation of NodeProto from ONNX, but in a form
+    more convenient to work with from Python.
+
+    We may temporarily edit these nodes to get them into Caffe2 form,
+    before actually translating into the Caffe2 protobuf, since this
+    is easier than decomposing everything, and putting it back together
+    when we're ready.
+    """
+    def __init__(self, node):
+        self.name = str(node.name)
+        self.op_type = str(node.op_type)
+        self.attrs = OnnxAttributes.from_onnx(node.attribute)
+        self.consumed_inputs = self.attrs.pop("consumed_inputs", None)
+        self.inputs = list(node.input)
+        self.outputs = list(node.output)
+
+
 class Caffe2Backend(Backend):
 
     # Operators that are different between Caffe2 and
@@ -131,23 +195,27 @@ class Caffe2Backend(Backend):
     # In most cases, this should be empty - as the effort of ONNX is
     # to unify the operator definitions.
     _renamed_operators = {
-        'Dot': 'MatMul',
-        'Caffe2ConvTranspose': 'ConvTranspose',
-        'GlobalMaxPool': 'MaxPool',
-        'GlobalAveragePool': 'AveragePool',
+        'Dot':                  'MatMul',
+        'Caffe2ConvTranspose':  'ConvTranspose',
+        'GlobalMaxPool':        'MaxPool',
+        'GlobalAveragePool':    'AveragePool',
     }
 
-    # NB: domain is RENAMED operator names, not the originals
-    # TODO: Is this really coherent?  If multiple operators map to the
-    # same name, no way to implement divergent attribute renaming in this case.
+    _conv_transpose_unpool_renamed_attrs  = {'kernel_shape': 'kernels'}
+    _conv_pool_op_renamed_attrs           = {'kernel_shape': 'kernels'}
+
+    # NB: domain is ONNX operator names.  This only really makes
+    # sense in the context of _renamed_operators as well
     _renamed_attrs = {
-        'Squeeze': {'axes': 'dims'},
-        'Transpose': {'perm': 'axes'},
-        'Conv': {'kernel_shape': 'kernels'},
-        'ConvTranspose': {'kernel_shape': 'kernels'},
-        'MaxPool': {'kernel_shape': 'kernels'},
-        'AveragePool': {'kernel_shape': 'kernels'},
-        'ChannelShuffle': {'kernel_shape': 'kernels'},
+        'Squeeze':              {'axes': 'dims'},
+        'Transpose':            {'perm': 'axes'},
+        'Caffe2ConvTranspose':  _conv_transpose_unpool_renamed_attrs,
+        'Conv':                 _conv_pool_op_renamed_attrs,
+        'MaxPool':              _conv_pool_op_renamed_attrs,
+        'GlobalMaxPool':        _conv_pool_op_renamed_attrs,
+        'AveragePool':          _conv_pool_op_renamed_attrs,
+        'GlobalAveragePool':    _conv_pool_op_renamed_attrs,
+        'ChannelShuffle':       {'kernel_shape': 'kernels'},
     }
 
     # operators whose behavior is different beyond renaming
@@ -155,7 +223,6 @@ class Caffe2Backend(Backend):
     # function from ToffeIR node_def to caffe2 op_def
     _special_operators = {
         'Constant': '_create_constant',
-        'Caffe2ConvTranspose': '_create_conv_transpose_unpool_base',
         'Conv': '_create_conv_pool_op_base',
         'AveragePool': '_create_conv_pool_op_base',
         'GlobalAveragePool': '_create_conv_pool_op_base',
@@ -184,80 +251,59 @@ class Caffe2Backend(Backend):
             return namedtupledict('Outputs', node.output)(*output_values)
 
     @classmethod
-    def fill_values(cls, arg, tensor):
-        data_type = tensor.data_type
-        if data_type == TensorProto.STRING:
-            arg.strings.extend(tensor.string_data)
-            return
+    def _create_tensor_filling_op(cls, onnx_tensor, name=None):
+        """
+        Given an Onnx TensorProto, translate it into a Caffe2 operator
+        which produces the given tensor filling op.
+        """
+        assert name or onnx_tensor.name
+        name = name or onnx_tensor.name
 
-        nptensor_data = to_array(tensor).flatten().tolist()
-        if data_type == TensorProto.FLOAT:
-            arg.floats.extend(nptensor_data)
-        elif data_type in [TensorProto.UINT8,
-                           TensorProto.INT8,
-                           TensorProto.UINT16,
-                           TensorProto.INT16,
-                           TensorProto.INT32,
-                           TensorProto.FLOAT16,
-                           TensorProto.BOOL,
-                           TensorProto.INT64]:
-            # TODO: Using this for FLOAT16 seems questionable
-            arg.ints.extend(nptensor_data)
-        else:
-            raise RuntimeError(
-                'unrecognized tensor constant type {}'.format(data_type))
+        c2_op = caffe2_pb2.OperatorDef()
 
-    @classmethod
-    def _get_attribute_by_name(cls, node_def, name):
-        for attr in node_def.attribute:
-            if attr.name == name:
-                return attr
-        raise IndexError('onnx node has no attribute ' + name)
+        c2_values = c2_op.arg.add()
+        c2_values.name = "values"
 
+        def tensor2list(onnx_tensor):
+            # Use the onnx.helper because the data may be raw
+            return onnx.numpy_helper.to_array(onnx_tensor).flatten().tolist()
 
-    @classmethod
-    def _create_tensor_filling_op(cls, tensor_proto, name=None):
-        assert name or tensor_proto.name
-        name = name or tensor_proto.name
-
-        op_def = caffe2_pb2.OperatorDef()
-        op_def.output.append(name)
-
-        if tensor_proto.data_type == TensorProto.FLOAT:
-            op_def.type = 'GivenTensorFill'
-        elif tensor_proto.data_type == TensorProto.INT64:
-            op_def.type = 'GivenTensorInt64Fill'
-        elif tensor_proto.data_type in [TensorProto.UINT8,
+        if onnx_tensor.data_type == TensorProto.FLOAT:
+            c2_op.type = 'GivenTensorFill'
+            c2_values.floats.extend(tensor2list(onnx_tensor))
+        elif onnx_tensor.data_type == TensorProto.INT64:
+            c2_op.type = 'GivenTensorInt64Fill'
+            c2_values.ints.extend(tensor2list(onnx_tensor))
+        elif onnx_tensor.data_type in [TensorProto.UINT8,
                                        TensorProto.INT8,
                                        TensorProto.UINT16,
                                        TensorProto.INT16,
                                        TensorProto.INT32,
                                        TensorProto.FLOAT16]:
-            op_def.type = 'GivenTensorIntFill'
-        elif tensor_proto.data_type == TensorProto.BOOL:
-            op_def.type = 'GivenTensorBoolFill'
-        elif tensor_proto.data_type == TensorProto.STRING:
-            op_def.type = 'GivenTensorStringFill'
+            c2_op.type = 'GivenTensorIntFill'
+            c2_values.ints.extend(tensor2list(onnx_tensor))
+        elif onnx_tensor.data_type == TensorProto.BOOL:
+            c2_op.type = 'GivenTensorBoolFill'
+            c2_values.ints.extend(tensor2list(onnx_tensor))
+        elif onnx_tensor.data_type == TensorProto.STRING:
+            c2_op.type = 'GivenTensorStringFill'
+            c2_values.strings.extend(tensor.string_data)
         else:
             raise RuntimeError(
-                "unrecognized tensor constant type {}".format(tensor_proto.data_type))
+                "unrecognized tensor type {}".format(onnx_tensor.data_type))
 
-        values = op_def.arg.add()
-        values.name = "values"
+        c2_shape = c2_op.arg.add()
+        c2_shape.name = "shape"
+        c2_shape.ints.extend(onnx_tensor.dims)
 
-        cls.fill_values(values, tensor_proto)
-        shape = op_def.arg.add()
-        shape.name = "shape"
-        shape.ints.extend(tensor_proto.dims)
+        c2_op.output.append(name)
 
-        return op_def
+        return c2_op
 
     @classmethod
-    def _create_constant(cls, node_def, env):
-        assert len(node_def.output) == 1
-        output_name = env[node_def.output[0]]
-        init_tensor = cls._get_attribute_by_name(node_def, 'value').t
-        return cls._create_tensor_filling_op(init_tensor, output_name)
+    def _create_constant(cls, n, env):
+        assert len(n.outputs) == 1
+        return cls._create_tensor_filling_op(n.attrs["value"], n.outputs[0])
 
     # Note [Caffe2 ConvPoolOpBase]
     # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -291,82 +337,28 @@ class Caffe2Backend(Backend):
     # differently.
 
     @classmethod
-    def _create_conv_pool_op_base(cls, node_def, env):
-        op_def = cls._common_op_translator(node_def, env)
+    def _create_conv_pool_op_base(cls, n, env):
+        if n.op_type.startswith('Global'):
+            n.attrs['global_pooling'] = 1
 
-        # NB: Don't forget to rename the operator to the correct thing in
-        # _renamed_operators
-        if node_def.op_type.startswith('Global'): # test against unrenamed!
-            global_pooling_attr = op_def.arg.add()
-            global_pooling_attr.name = 'global_pooling'
-            global_pooling_attr.i = 1
+        try:
+            kernels = n.attrs['kernel_shape']
+            pads = n.attrs['pads']
+        except KeyError:
+            pass
+        else:
+            if len(kernels) == len(pads):
+                # Caffe2 requires pads to be twice the size of kernels.
+                n.attrs['pads'] = pads * 2
 
-        # TODO: Postel was wrong
-        # https://tools.ietf.org/html/draft-thomson-postel-was-wrong-00
-        # Please apply more stringent checks on these in onnx repo.
-
-        d = dict(map(lambda arg: (arg.name, arg), op_def.arg))
-        if 'kernels' in d and 'pads' in d and len(d['kernels'].ints) == len(d['pads'].ints):
-            # Caffe2 requires pads to be twice the size of kernels.
-            # TODO: Hmm, this is going to mutate the original op_def.arg, isn't
-            # it...
-            new_pads = list(d['pads'].ints) * 2
-            d['pads'].ClearField(bytes_to_native_str(b'ints'))
-            d['pads'].ints.extend(new_pads)
-        op_def.ClearField(bytes_to_native_str(b'arg'))
-        op_def.arg.extend(d.values())
-
-        return op_def
+        return cls._translate_onnx(n, env)
 
     @classmethod
-    def _create_conv_transpose_unpool_base(cls, node_def, env):
-        op_def = cls._common_op_translator(node_def, env)
-
-        def can_be_singular(values):
-            """
-            De-pluralization (collapsing kernels=(1,1) to kernel=1) is only possible
-            in a semantics-preserving way if all the elements are the same.
-            """
-            if len(values) == 0:
-                return False
-            return all(values[0] == v for v in values)
-
-        depluralizer = { 'kernels': 'kernel', 'strides': 'stride', 'pads': 'pad' }
-        def depluralize(arg):
-            if arg.name in depluralizer:
-                # TODO: replace this with a version test
-                if not can_be_singular(arg.ints):
-                    raise "Caffe2 doesn't support plural kernels/strides/pads prior to 6cb4d1ecb0dfb553f797f6a8a61dd6966909cb0b; if you know your Caffe2 is recent enough, comment out this test"
-                # NB: this code is MANDATORY, because prior to
-                # https://github.com/caffe2/caffe2/commit/6cb4d1ecb0dfb553f797f6a8a61dd6966909cb0b
-                # the pluralized versions were not supported.
-                # You'll get an error like
-                # "[enforce fail at conv_transpose_unpool_op_base.h:54] kernel_h_ > 0"
-                # if your Caffe2 is too old and you actually use the plural
-                # version.  See Note [Caffe2 ConvPoolOpBase] for more context.
-                singular_arg = caffe2_pb2.Argument()
-                singular_arg.name = depluralizer[arg.name]
-                singular_arg.i = arg.ints[0]
-                return singular_arg
-            else:
-                return arg
-
-        # TODO: turn me into a helper
-        new_args = map(depluralize, op_def.arg)
-        op_def.ClearField(bytes_to_native_str(b'arg'))
-        op_def.arg.extend(new_args)
-        return op_def
-
-    @classmethod
-    def _create_reshape(cls, node_def, env):
-        op_def = caffe2_pb2.OperatorDef()
+    def _create_reshape(cls, n, env):
+        c2_op = cls._translate_onnx(n, env)
         # Caffe2 has an extra output
-        op_def.output.extend([env[o] for o in node_def.output] + [env.fresh()])
-        op_def.input.extend([env[i] for i in node_def.input])
-        op_def.type = 'Reshape'
-        op_def.name = node_def.name
-        op_def.arg.extend(map(lambda x: cls._onnx_arg_to_caffe2_arg(op_def.type, x), node_def.attribute))
-        return op_def
+        c2_op.output.extend([env.fresh()])
+        return c2_op
 
     @classmethod
     def prepare(cls, predict_model, device='CPU',
@@ -390,7 +382,7 @@ class Caffe2Backend(Backend):
 
         with ws, core.DeviceScope(get_device_option(device)):
             for init_tensor in predict_model.graph.initializer:
-                workspace.FeedBlob(init_tensor.name, to_array(init_tensor))
+                workspace.FeedBlob(init_tensor.name, onnx.numpy_helper.to_array(init_tensor))
             if init_model:
                 init_net, _ = cls.onnx_graph_to_caffe2_net(init_model.graph)
                 workspace.RunNetOnce(init_net)
@@ -399,31 +391,6 @@ class Caffe2Backend(Backend):
                              if not workspace.HasBlob(x)]
 
         return Caffe2Rep(predict_net, device, ws, uninitialized)
-
-    @classmethod
-    def _onnx_arg_to_caffe2_arg(cls, op_name, onnx_arg):
-        c2_arg = caffe2_pb2.Argument()
-        if op_name in cls._renamed_attrs and onnx_arg.name in cls._renamed_attrs[op_name]:
-            # Handle renamed attributes
-            c2_arg.name = cls._renamed_attrs[op_name][onnx_arg.name]
-        else:
-            c2_arg.name = onnx_arg.name
-        if onnx_arg.HasField('f'):
-            c2_arg.f = onnx_arg.f
-        elif onnx_arg.HasField('i'):
-            c2_arg.i = onnx_arg.i
-        elif onnx_arg.HasField('s'):
-            c2_arg.s = onnx_arg.s
-        elif len(onnx_arg.floats):
-            c2_arg.floats.extend(onnx_arg.floats)
-        elif len(onnx_arg.ints):
-            c2_arg.ints.extend(onnx_arg.ints)
-        elif len(onnx_arg.strings):
-            c2_arg.strings.extend(onnx_arg.strings)
-        elif onnx_arg.HasField('graphs'):
-            raise NotImplementedError(
-                "Caffe2 backend does not support sub graph yet.")
-        return c2_arg
 
     @classmethod
     # TODO: This method needs a refactor for clarity
@@ -436,11 +403,11 @@ class Caffe2Backend(Backend):
         if node_def.op_type in cls._special_operators:
             translator = getattr(cls, cls._special_operators[node_def.op_type])
         else:
-            translator = cls._common_op_translator
-        return translator(node_def, env)
+            translator = cls._translate_onnx
+        return translator(OnnxNode(node_def), env)
 
     @classmethod
-    def _common_op_translator(cls, node_def, env):
+    def _translate_onnx(cls, onnx_node, env):
         """
         This translator performs the basic translation of ONNX nodes into
         Caffe2 operators.  Besides doing a straightforward marshalling from
@@ -454,40 +421,41 @@ class Caffe2Backend(Backend):
         If you're writing a custom translator, consider calling this first,
         and then fixing things up further.
         """
-        op_def = caffe2_pb2.OperatorDef()
-        op_def.input.extend([env[i] for i in node_def.input])
+        c2_op = caffe2_pb2.OperatorDef()
 
-        for output in node_def.output:
+        c2_op.input.extend([env[i] for i in onnx_node.inputs])
+
+        for output in onnx_node.outputs:
             env[output] = output
-
         # when consumed_inputs exist, we need to
         # rewrite the outputs to re-use these inputs to
         # support Caffe2-style in-place operators.
-        for attr in node_def.attribute:
-            if attr.name == "consumed_inputs":
-                schema = onnx.defs.get_schema(node_def.op_type)
-                for i,input in enumerate(node_def.input):
-                    if attr.ints[i] != 0:
-                        # for each consumed input, the schema for the op
-                        # tells us which output (output_idx) that
-                        # this consumed input becomes
-                        _, output_idx = schema.consumed(i)
-                        # consumed outputs are not always present
-                        # for instance batch norm in test mode
-                        # does not return the consumed inputs
-                        if output_idx < len(node_def.output):
-                            # rather than use its ONNX name
-                            # use the original input name for the blob
-                            # that will be consumed
-                            env[node_def.output[output_idx]] = env[input]
+        if onnx_node.consumed_inputs:
+            schema = onnx.defs.get_schema(onnx_node.op_type)
+            for i, input in enumerate(onnx_node.inputs):
+                if onnx_node.consumed_inputs[i] != 0:
+                    # for each consumed input, the schema for the op
+                    # tells us which output (output_idx) that
+                    # this consumed input becomes
+                    _, output_idx = schema.consumed(i)
+                    # consumed outputs are not always present
+                    # for instance batch norm in test mode
+                    # does not return the consumed inputs
+                    if output_idx < len(onnx_node.outputs):
+                        # rather than use its ONNX name
+                        # use the original input name for the blob
+                        # that will be consumed
+                        env[onnx_node.outputs[output_idx]] = env[input]
 
-        op_def.output.extend([env[i] for i in node_def.output])
-        op_def.name = node_def.name
-        op_def.type = cls._renamed_operators.get(node_def.op_type, node_def.op_type)
-        op_def.arg.extend(
-            cls._onnx_arg_to_caffe2_arg(op_def.type, a) for a in node_def.attribute
-            if a.name != "consumed_inputs")
-        return op_def
+        c2_op.output.extend([env[i] for i in onnx_node.outputs])
+        c2_op.name = onnx_node.name
+        onnx_op = onnx_node.op_type
+        c2_op.type = cls._renamed_operators.get(onnx_op, onnx_op)
+
+        def kmap(k):
+            return cls._renamed_attrs.get(onnx_op, {}).get(k, k)
+        c2_op.arg.extend(onnx_node.attrs.caffe2(kmap=kmap))
+        return c2_op
 
 
     @classmethod
