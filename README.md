@@ -1,5 +1,6 @@
 onnx-caffe2
 ========
+[![TravisCI Build Status](https://travis-ci.org/onnx/onnx-caffe2.svg?branch=master)](https://travis-ci.org/onnx/onnx-caffe2.svg?branch=master)
 
 Caffe2 implementation of Open Neural Network Exchange (ONNX).
 
