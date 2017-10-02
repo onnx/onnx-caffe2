@@ -8,7 +8,6 @@ from __future__ import print_function
 from __future__ import unicode_literals
 
 import contextlib
-import uuid
 from future.utils import bytes_to_native_str
 
 import caffe2
@@ -20,6 +19,7 @@ from onnx.onnx_pb2 import TensorProto, AttributeProto
 import onnx.numpy_helper
 import onnx.defs
 from onnx.backend.base import Backend, BackendRep, Device, DeviceType, namedtupledict
+from onnx_caffe2.workspace import Workspace
 
 
 def get_device_option(device):
@@ -32,60 +32,6 @@ def get_name_scope(device):
     if device.type == DeviceType.CUDA:
         return 'gpu_{}'.format(device.device_id)
     return ''
-
-
-class Workspace(object):
-    """
-    An object representing a Caffe2 workspace.  It is a context manager,
-    so you can say 'with workspace:' to use the represented workspace
-    as your global workspace.  It also supports every method supported
-    by caffe2.python.workspace, but instead of running these operations
-    in the global workspace, it runs them in the workspace represented
-    by this object.  When this object goes dead, the workspace (and all
-    nets and blobs within it) are freed.
-
-    Why do we need this class?  Caffe2's workspace model is very "global state"
-    oriented, in that there is always some ambient global workspace you are
-    working in which holds on to all of your networks and blobs.  This class
-    makes it possible to work with workspaces more locally, and without
-    forgetting to deallocate everything in the end.
-    """
-    def __init__(self):
-        # Caffe2 (apparently) doesn't provide any native method of generating
-        # a fresh, unused workspace, so we have to fake it by generating
-        # a unique ID and hoping it's not used already / will not be used
-        # directly in the future.
-        self.workspace_id = str(uuid.uuid4())
-        # A stack, so that the context manager is reentrant.
-        self.workspace_stack = []
-
-    def __getattr__(self, attr):
-        def f(*args, **kwargs):
-            with self:
-                return getattr(workspace, attr)(*args, **kwargs)
-        return f
-
-    def __enter__(self):
-        self.workspace_stack.append(workspace.CurrentWorkspace())
-        workspace.SwitchWorkspace(self.workspace_id, create_if_missing=True)
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        w = self.workspace_stack.pop()
-        # Strictly speaking, create_if_missing here is unnecessary, since a user
-        # is not supposed to be allowed to destruct a workspace while we're in
-        # it.  However, empirically, it has been observed that during abnormal
-        # shutdown, Caffe2 deletes its default workspace fairly early in the
-        # final calls to destructors.  In this case, we may attempt to exit
-        # to a default workspace which no longer exists.  create_if_missing=True
-        # will (harmlessly) recreate the workspace before we finally quit.)
-        workspace.SwitchWorkspace(w, create_if_missing=True)
-
-    def __del__(self):
-        # NB: This is a 'self' call because we need to switch into the workspace
-        # we want to reset before we actually reset it.  A direct call to
-        # workspace.ResetWorkspace() will reset the ambient workspace, which
-        # is not want we want.
-        self.ResetWorkspace()
 
 
 class Caffe2Rep(BackendRep):
@@ -188,54 +134,6 @@ class OnnxNode(object):
         self.outputs = list(node.output)
 
 
-def translateTensorProto(onnx_tensor, c2_out):
-    """
-    Given an Onnx TensorProto, translate it into a Caffe2 operator
-    which produces the given tensor constant at Caffe2 name c2_out.
-    """
-
-    c2_op = caffe2_pb2.OperatorDef()
-
-    c2_values = c2_op.arg.add()
-    c2_values.name = "values"
-
-    def tensor2list(onnx_tensor):
-        # Use the onnx.helper because the data may be raw
-        return onnx.numpy_helper.to_array(onnx_tensor).flatten().tolist()
-
-    if onnx_tensor.data_type == TensorProto.FLOAT:
-        c2_op.type = 'GivenTensorFill'
-        c2_values.floats.extend(tensor2list(onnx_tensor))
-    elif onnx_tensor.data_type == TensorProto.INT64:
-        c2_op.type = 'GivenTensorInt64Fill'
-        c2_values.ints.extend(tensor2list(onnx_tensor))
-    elif onnx_tensor.data_type in [TensorProto.UINT8,
-                                   TensorProto.INT8,
-                                   TensorProto.UINT16,
-                                   TensorProto.INT16,
-                                   TensorProto.INT32,
-                                   TensorProto.FLOAT16]:
-        c2_op.type = 'GivenTensorIntFill'
-        c2_values.ints.extend(tensor2list(onnx_tensor))
-    elif onnx_tensor.data_type == TensorProto.BOOL:
-        c2_op.type = 'GivenTensorBoolFill'
-        c2_values.ints.extend(tensor2list(onnx_tensor))
-    elif onnx_tensor.data_type == TensorProto.STRING:
-        c2_op.type = 'GivenTensorStringFill'
-        c2_values.strings.extend(tensor.string_data)
-    else:
-        raise RuntimeError(
-            "unrecognized tensor type {}".format(onnx_tensor.data_type))
-
-    c2_shape = c2_op.arg.add()
-    c2_shape.name = "shape"
-    c2_shape.ints.extend(onnx_tensor.dims)
-
-    c2_op.output.extend([c2_out])
-
-    return c2_op
-
-
 class Caffe2Backend(Backend):
 
     # Operators that are different between Caffe2 and
@@ -299,8 +197,59 @@ class Caffe2Backend(Backend):
             return namedtupledict('Outputs', node.output)(*output_values)
 
     @classmethod
+    def _create_tensor_filling_op(cls, onnx_tensor, name=None):
+        """
+        Given an Onnx TensorProto, translate it into a Caffe2 operator
+        which produces the given tensor filling op.
+        """
+        assert name or onnx_tensor.name
+        name = name or onnx_tensor.name
+
+        c2_op = caffe2_pb2.OperatorDef()
+
+        c2_values = c2_op.arg.add()
+        c2_values.name = "values"
+
+        def tensor2list(onnx_tensor):
+            # Use the onnx.helper because the data may be raw
+            return onnx.numpy_helper.to_array(onnx_tensor).flatten().tolist()
+
+        if onnx_tensor.data_type == TensorProto.FLOAT:
+            c2_op.type = 'GivenTensorFill'
+            c2_values.floats.extend(tensor2list(onnx_tensor))
+        elif onnx_tensor.data_type == TensorProto.INT64:
+            c2_op.type = 'GivenTensorInt64Fill'
+            c2_values.ints.extend(tensor2list(onnx_tensor))
+        elif onnx_tensor.data_type in [TensorProto.UINT8,
+                                       TensorProto.INT8,
+                                       TensorProto.UINT16,
+                                       TensorProto.INT16,
+                                       TensorProto.INT32,
+                                       TensorProto.FLOAT16]:
+            c2_op.type = 'GivenTensorIntFill'
+            c2_values.ints.extend(tensor2list(onnx_tensor))
+        elif onnx_tensor.data_type == TensorProto.BOOL:
+            c2_op.type = 'GivenTensorBoolFill'
+            c2_values.ints.extend(tensor2list(onnx_tensor))
+        elif onnx_tensor.data_type == TensorProto.STRING:
+            c2_op.type = 'GivenTensorStringFill'
+            c2_values.strings.extend(tensor.string_data)
+        else:
+            raise RuntimeError(
+                "unrecognized tensor type {}".format(onnx_tensor.data_type))
+
+        c2_shape = c2_op.arg.add()
+        c2_shape.name = "shape"
+        c2_shape.ints.extend(onnx_tensor.dims)
+
+        c2_op.output.append(name)
+
+        return c2_op
+
+    @classmethod
     def _create_constant(cls, n, env):
-        return translateTensorProto(n.attrs["value"], n.outputs[0])
+        assert len(n.outputs) == 1
+        return cls._create_tensor_filling_op(n.attrs["value"], n.outputs[0])
 
     # Note [Caffe2 ConvPoolOpBase]
     # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -374,15 +323,15 @@ class Caffe2Backend(Backend):
         ws = Workspace()
         device = Device(device)
 
-        predict_net, _ = cls._onnx_graph_to_caffe2_net(predict_model.graph)
+        predict_net, _ = cls.onnx_graph_to_caffe2_net(predict_model.graph)
         predict_net.device_option.CopyFrom(get_device_option(device))
 
         with ws, core.DeviceScope(get_device_option(device)):
             for init_tensor in predict_model.graph.initializer:
                 workspace.FeedBlob(init_tensor.name, onnx.numpy_helper.to_array(init_tensor))
             if init_model:
-                init_net, _ = cls._onnx_graph_to_caffe2_net(init_model.graph)
-                workspaces.RunNetOnce(init_net)
+                init_net, _ = cls.onnx_graph_to_caffe2_net(init_model.graph)
+                workspace.RunNetOnce(init_net)
             uninitialized = [x
                              for x in predict_net.external_input
                              if not workspace.HasBlob(x)]
@@ -456,7 +405,7 @@ class Caffe2Backend(Backend):
 
 
     @classmethod
-    def _onnx_graph_to_caffe2_net(cls, graph_def):
+    def onnx_graph_to_caffe2_net(cls, graph_def):
 
         # This is a hotfix to handle caffe2 frontend which sometimes
         # creates ONNX graphs with edges which are not declared anywhere.
@@ -486,6 +435,13 @@ class Caffe2Backend(Backend):
         net_def.external_input.extend(graph_def.input)
         net_def.external_output.extend([env[o] for o in graph_def.output])
         return net_def, env
+
+    @classmethod
+    def onnx_initializer_to_caffe2_init_net(cls, initializer, init_net_name='init'):
+        net_def = caffe2_pb2.NetDef()
+        net_def.name = init_net_name
+        net_def.op.extend(cls._create_tensor_filling_op(tp) for tp in initializer)
+        return net_def
 
 
 prepare = Caffe2Backend.prepare

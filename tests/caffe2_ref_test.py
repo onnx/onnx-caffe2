@@ -8,29 +8,24 @@ import sys
 import unittest
 
 from caffe2.proto import caffe2_pb2
-from caffe2.python import brew
-from caffe2.python.model_helper import ModelHelper
 
 import onnx
 from onnx.helper import make_node, make_graph, make_tensor
-from onnx_caffe2.helper import make_model
+from onnx_caffe2.helper import make_model, c2_native_run_net
 
 from onnx import onnx_pb2
 import onnx_caffe2.frontend as c2_onnx
 import onnx_caffe2.backend as c2
 
-import psutil
 import numpy as np
 import google.protobuf.text_format
 from caffe2.python.models.download import downloadFromURLToFile, getURLFromName, deleteDirectory
 
 from onnx_caffe2.helper import make_model
+from test_utils import TestCase
 
 
-class TestCaffe2Basic(unittest.TestCase):
-    def setUp(self):
-        np.random.seed(seed=0)
-
+class TestCaffe2Basic(TestCase):
     def test_relu_node_inplace(self):
         node_def = make_node(
             "Relu", ["X"], ["Y"], consumed_inputs=[1])
@@ -80,7 +75,10 @@ class TestCaffe2Basic(unittest.TestCase):
             name="test_initializer",
             inputs=["X", "Y", "weight"],
             outputs=["W"],
-            initializer=[make_tensor("weight", onnx_pb2.TensorProto.FLOAT, [2, 2], weight.flatten().astype(float))]
+            initializer=[make_tensor("weight",
+                                     onnx_pb2.TensorProto.FLOAT,
+                                     [2, 2],
+                                     weight.flatten().astype(float))]
         )
 
         def sigmoid(x):
@@ -92,18 +90,21 @@ class TestCaffe2Basic(unittest.TestCase):
         np.testing.assert_almost_equal(output["W"], W_ref)
 
 
-class TestCaffe2End2End(unittest.TestCase):
-    def setUp(self):
-        np.random.seed(seed=0)
-
-    def model_dir(self, model):
+class TestCaffe2End2End(TestCase):
+    def _model_dir(self, model):
         caffe2_home = os.path.expanduser(os.getenv('CAFFE2_HOME', '~/.caffe2'))
         models_dir = os.getenv('CAFFE2_MODELS', os.path.join(caffe2_home, 'models'))
         return os.path.join(models_dir, model)
 
-    def _test_net(self, net_name, input_blob_dims=(1, 3, 224, 224), decimal=7):
-        print(net_name, '(_test_net starts):', psutil.virtual_memory())
-        model_dir = self.model_dir(net_name)
+    def _test_net(self,
+                  net_name,
+                  use_initializer,
+                  input_blob_dims=(1, 3, 224, 224),
+                  decimal=7):
+        np.random.seed(seed=0)
+        model_dir = self._model_dir(net_name)
+        if not os.path.exists(model_dir):
+            self._download(net_name)
         # predict net is stored as a protobuf text
         c2_predict_pb = os.path.join(model_dir, 'predict_net.pbtxt')
         c2_predict_net = caffe2_pb2.NetDef()
@@ -117,106 +118,86 @@ class TestCaffe2End2End(unittest.TestCase):
         with open(c2_init_pb, 'rb') as f:
             c2_init_net.ParseFromString(f.read())
         c2_init_net.name = net_name + '_init'
-        print(net_name, '(after loading net pb):', psutil.virtual_memory())
 
         n, c, h, w = input_blob_dims
         data = np.random.randn(n, c, h, w).astype(np.float32)
         inputs = [data]
-        c2_ref = c2_onnx.caffe2_net_reference(c2_init_net, c2_predict_net, inputs)
-        print(net_name, '(random inputs generated):', psutil.virtual_memory())
+        c2_outputs = c2_native_run_net(c2_init_net, c2_predict_net, inputs)
 
         predict_model = c2_onnx.caffe2_net_to_onnx_model(c2_predict_net)
-        # # Test using separated init_graph
-        # init_graph = c2_onnx.caffe2_net_to_onnx_graph(c2_init_net)
-        # c2_ir = c2.prepare(predict_graph, init_graph=init_graph)
-        # onnx_output = c2_ir.run(inputs)
-        # for blob_name in c2_ref.keys():
-        #     np.testing.assert_almost_equal(
-        #         onnx_output[blob_name], c2_ref[blob_name], decimal=decimal)
-        # print(net_name, '(init_graph created):', psutil.virtual_memory())
 
-        # Test using initializers
-        initializers = c2_onnx.caffe2_init_net_to_initializers(c2_init_net)
-        predict_model.graph.initializer.extend(initializers)
-        c2_ir = c2.prepare(predict_model)
-        onnx_output = c2_ir.run(inputs)
-        for blob_name in c2_ref.keys():
-            np.testing.assert_almost_equal(
-                onnx_output[blob_name], c2_ref[blob_name], decimal=decimal)
+        if use_initializer:
+            # Test using initializers
+            initializers = c2_onnx.caffe2_init_net_to_initializer(c2_init_net)
+            predict_model.graph.initializer.extend(initializers)
+            c2_ir = c2.prepare(predict_model)
+        else:
+            # Test using separated init_graph
+            init_model = c2_onnx.caffe2_net_to_onnx_model(c2_init_net)
+            c2_ir = c2.prepare(predict_model, init_model=init_model)
 
-        print(net_name, '(finished running):', psutil.virtual_memory())
+        onnx_outputs = c2_ir.run(inputs)
+        self.assertSameOutputs(c2_outputs, onnx_outputs, decimal=decimal)
+        self.report_mem_usage(net_name)
 
     def _download(self, model):
-        model_dir = self.model_dir(model)
-
-        if os.path.exists(model_dir):
-            print('Folder {} already exists. Skip download.'.format(model))
-            return
+        model_dir = self._model_dir(model)
+        assert not os.path.exists(model_dir)
         os.makedirs(model_dir)
         for f in ['predict_net.pb', 'predict_net.pbtxt', 'init_net.pb']:
+            url = getURLFromName(model, f)
+            dest = os.path.join(model_dir, f)
             try:
                 try:
-                    downloadFromURLToFile(getURLFromName(model, f),
-                                          '{folder}/{f}'.format(folder=model_dir,
-                                                                f=f),
+                    downloadFromURLToFile(url, dest,
                                           show_progress=False)
                 except TypeError:
                     # show_progress not supported prior to
                     # Caffe2 78c014e752a374d905ecfb465d44fa16e02a28f1
                     # (Sep 17, 2017)
-                    downloadFromURLToFile(getURLFromName(model, f),
-                                          '{folder}/{f}'.format(folder=model_dir,
-                                                                f=f))
+                    downloadFromURLToFile(url, dest)
             except Exception as e:
-                print("Abort: {reason}".format(reason=str(e)))
+                print("Abort: {reason}".format(reason=e))
                 print("Cleaning up...")
                 deleteDirectory(model_dir)
                 exit(1)
 
     def test_alexnet(self):
-        model = 'bvlc_alexnet'
-        self._download(model)
-        self._test_net(model, decimal=4)
+        self._test_net('bvlc_alexnet', use_initializer=True, decimal=4)
+        self._test_net('bvlc_alexnet', use_initializer=False, decimal=4)
 
     def test_resnet50(self):
-        model = 'resnet50'
-        self._download(model)
-        self._test_net(model)
+        self._test_net('resnet50', use_initializer=True)
+        self._test_net('resnet50', use_initializer=False)
 
     def test_vgg16(self):
-        model = 'vgg16'
-        self._download(model)
-        self._test_net(model)
+        self._test_net('vgg16', use_initializer=True)
+        self._test_net('vgg16', use_initializer=False)
 
     def test_vgg19(self):
-        model = 'vgg19'
-        self._download(model)
-        self._test_net(model)
+        self._test_net('vgg19', use_initializer=True)
+        # This caused out of memory error on travis with Python 2
+        # self._test_net('vgg19', use_initializer=False)
 
     def test_inception_v1(self):
-        model = 'inception_v1'
-        self._download(model)
-        self._test_net(model, decimal=2)
+        self._test_net('inception_v1', use_initializer=True, decimal=2)
+        self._test_net('inception_v1', use_initializer=False, decimal=2)
 
     def test_inception_v2(self):
-        model = 'inception_v2'
-        self._download(model)
-        self._test_net(model)
+        self._test_net('inception_v2', use_initializer=True)
+        self._test_net('inception_v2', use_initializer=False)
 
     def test_squeezenet(self):
-        model = 'squeezenet'
-        self._download(model)
-        self._test_net(model)
+        self._test_net('squeezenet', use_initializer=True)
+        self._test_net('squeezenet', use_initializer=False)
 
     def test_shufflenet(self):
-        model = 'shufflenet'
-        self._download(model)
-        self._test_net(model)
+        self._test_net('shufflenet', use_initializer=True)
+        self._test_net('shufflenet', use_initializer=False)
 
     def test_densenet121(self):
-        model = 'densenet121'
-        self._download(model)
-        self._test_net(model)
+        self._test_net('densenet121', use_initializer=True)
+        self._test_net('densenet121', use_initializer=False)
 
 
 if __name__ == '__main__':
