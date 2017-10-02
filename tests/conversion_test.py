@@ -42,7 +42,7 @@ class TestConversion(TestCase):
 
         result = self._run_command(
             caffe2_to_onnx, [
-                '--caffe2-net', caffe2_net.name,
+                caffe2_net.name,
                 '--caffe2-init-net', caffe2_init_net.name,
                 '--output', output.name,
             ])
@@ -76,7 +76,7 @@ class TestConversion(TestCase):
 
         result = self._run_command(
             onnx_to_caffe2, [
-                '--onnx-model', onnx_model.name,
+                onnx_model.name,
                 '--output', output.name,
                 '--init-net-output', init_net_output.name,
             ])

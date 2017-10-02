@@ -17,16 +17,14 @@ import onnx_caffe2.frontend as c2_onnx
         'help_option_names': ['-h', '--help']
     }
 )
-@click.option('--caffe2-net', required=True,
-              type=click.File('rb'),
-              help="Path of the caffe2 net pb file")
+@click.argument('caffe2_net', type=click.File('rb'))
 @click.option('--caffe2-net-name',
               type=str,
               help="Name of the caffe2 net")
 @click.option('--caffe2-init-net',
               type=click.File('rb'),
               help="Path of the caffe2 init net pb file")
-@click.option('--output', required=True,
+@click.option('-o', '--output', required=True,
               type=click.File('wb'),
               help='Output path for the onnx model pb file')
 def caffe2_to_onnx(caffe2_net,
@@ -58,10 +56,8 @@ def caffe2_to_onnx(caffe2_net,
         'help_option_names': ['-h', '--help']
     }
 )
-@click.option('--onnx-model', required=True,
-              type=click.File('rb'),
-              help="Path of the onnx model file")
-@click.option('--output', required=True,
+@click.argument('onnx_model', type=click.File('rb'))
+@click.option('-o', '--output', required=True,
               type=click.File('wb'),
               help='Output path for the caffe2 net file')
 @click.option('--init-net-output',
