@@ -9,23 +9,16 @@ from caffe2.python import workspace
 from onnx import helper
 from onnx.backend.base import namedtupledict
 
+from onnx_caffe2.workspace import Workspace
+
 
 def make_model(graph, **kwargs):
     kwargs.setdefault('producer_name', 'onnx-caffe2')
     return helper.make_model(graph=graph, **kwargs)
 
 
-@contextlib.contextmanager
-def _caffe2_workspace(name=b"caffe2_ws"):
-    old_ws_name = workspace.CurrentWorkspace()
-    workspace.SwitchWorkspace(name, True)
-    yield
-    workspace.ResetWorkspace()
-    workspace.SwitchWorkspace(old_ws_name)
-
-
 def c2_native_run_op(op_def, inputs):
-    with _caffe2_workspace():
+    with Workspace():
         if isinstance(inputs, dict):
             for key, value in inputs.items():
                 workspace.FeedBlob(key, value)
@@ -42,7 +35,7 @@ def c2_native_run_op(op_def, inputs):
 
 
 def c2_native_run_net(init_net, predict_net, inputs):
-    with _caffe2_workspace():
+    with Workspace():
         if init_net:
             workspace.RunNetOnce(init_net)
 
