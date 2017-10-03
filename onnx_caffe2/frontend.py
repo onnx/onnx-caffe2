@@ -289,9 +289,21 @@ def caffe2_net_to_onnx_graph(net_def):
     graph_def.name = net_def.name
     # This is a mapping from Caffe2 names to ONNX names
     name_map = NameMap()
-    graph_def.input.extend(map(name_map.rename, net_def.external_input))
+    # TODO: This is cheating. Invent some magic to infer the types and
+    # protos of graph input and output
+    graph_def.input.extend(
+        onnx.helper.make_tensor_value_info(
+            name=name_map.rename(name),
+            elem_type=onnx_pb2.TensorProto.FLOAT,
+            shape=(1, 3, 224, 224))
+        for name in net_def.external_input)
     graph_def.node.extend(
         caffe2_op_to_node_def(op, name_map) for op in net_def.op)
-    graph_def.output.extend(map(name_map.rename, net_def.external_output))
+    graph_def.output.extend(
+        onnx.helper.make_tensor_value_info(
+            name=name_map.rename(name),
+            elem_type=onnx_pb2.TensorProto.FLOAT,
+            shape=(1, 3, 224, 224))
+        for name in net_def.external_output)
     checker.check_graph(graph_def)
     return graph_def

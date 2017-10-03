@@ -10,7 +10,7 @@ import unittest
 from caffe2.proto import caffe2_pb2
 
 import onnx
-from onnx.helper import make_node, make_graph, make_tensor
+from onnx.helper import make_node, make_graph, make_tensor, make_tensor_value_info
 from onnx_caffe2.helper import make_model, c2_native_run_net
 
 from onnx import onnx_pb2
@@ -27,39 +27,42 @@ from test_utils import TestCase
 
 class TestCaffe2Basic(TestCase):
     def test_relu_node_inplace(self):
-        node_def = make_node(
-            "Relu", ["X"], ["Y"], consumed_inputs=[1])
         X = np.random.randn(3, 2).astype(np.float32)
+        Y_ref = np.clip(X, 0, np.inf)
+
+        node_def = make_node(
+            "Relu", ["X"], ["X"], consumed_inputs=[1])
         output = c2.run_node(
             node_def, {"X": X})
+        np.testing.assert_almost_equal(output.X, Y_ref)
+
         graph_def = make_graph(
             [node_def],
             name="test",
-            inputs=["X"],
-            outputs=["X", "Y"])
-        Y_ref = np.clip(X, 0, np.inf)
+            inputs=[make_tensor_value_info("X", onnx.TensorProto.FLOAT, [1, 2])],
+            outputs=[make_tensor_value_info("X", onnx.TensorProto.FLOAT, [1, 2])])
         c2_rep = c2.prepare(make_model(graph_def))
         output = c2_rep.run({"X": X})
-        # With the inplace change from Zach, there shouldn't be Y
-        # np.testing.assert_almost_equal(output["Y"], Y_ref)
-
-        # ensure  we wrote over X
-        np.testing.assert_almost_equal(output["X"], Y_ref)
+        np.testing.assert_almost_equal(output.X, Y_ref)
 
     def test_relu_graph(self):
-        inputs = ['X']
-        outputs = ['Y']
-        graph_def = make_graph(
-            [make_node("Relu", inputs, outputs)],
-            name="test",
-            inputs=inputs,
-            outputs=outputs)
         X = np.random.randn(3, 2).astype(np.float32)
         Y_ref = np.clip(X, 0, np.inf)
-        # Testing with a list
+
+        node_def = make_node(
+            "Relu", ["X"], ["Y"])
+        output = c2.run_node(
+            node_def, {"X": X})
+        np.testing.assert_almost_equal(output.Y, Y_ref)
+
+        graph_def = make_graph(
+            [node_def],
+            name="test",
+            inputs=[make_tensor_value_info("X", onnx.TensorProto.FLOAT, [1, 2])],
+            outputs=[make_tensor_value_info("Y", onnx.TensorProto.FLOAT, [1, 2])])
         c2_rep = c2.prepare(make_model(graph_def))
-        output = c2_rep.run({"X": X})
-        np.testing.assert_almost_equal(output["Y"], Y_ref)
+        output = c2_rep.run(X)
+        np.testing.assert_almost_equal(output.Y, Y_ref)
 
     def test_initializer(self):
         X = np.array([[1, 2], [3, 4]]).astype(np.float32)
@@ -73,8 +76,14 @@ class TestCaffe2Basic(TestCase):
              make_node("Sigmoid", ["W"], ["W"]),
              make_node("Scale", ["W"], ["W"], scale=-1.0)],
             name="test_initializer",
-            inputs=["X", "Y", "weight"],
-            outputs=["W"],
+            inputs=[
+                make_tensor_value_info("X", onnx.TensorProto.FLOAT, (2, 2)),
+                make_tensor_value_info("Y", onnx.TensorProto.FLOAT, (2, 2)),
+                make_tensor_value_info("weight", onnx.TensorProto.FLOAT, (2, 2)),
+            ],
+            outputs=[
+                make_tensor_value_info("W", onnx.TensorProto.FLOAT, (2, 2))
+            ],
             initializer=[make_tensor("weight",
                                      onnx_pb2.TensorProto.FLOAT,
                                      [2, 2],
