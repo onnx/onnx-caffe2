@@ -79,5 +79,5 @@ def onnx_to_caffe2(onnx_model, output, init_net_output):
         init_net_output.write(init_net.SerializeToString())
         del graph_def.initializer[:]
 
-    caffe2_net, _ = c2.onnx_graph_to_caffe2_net(graph_def)
+    caffe2_net = c2.onnx_graph_to_caffe2_net(graph_def)
     output.write(caffe2_net.SerializeToString())

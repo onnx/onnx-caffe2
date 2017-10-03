@@ -21,11 +21,16 @@ import numpy as np
 import google.protobuf.text_format
 from caffe2.python.models.download import downloadFromURLToFile, getURLFromName, deleteDirectory
 
-from onnx_caffe2.helper import make_model
+from onnx_caffe2.helper import make_model, dummy_name
 from test_utils import TestCase
 
 
 class TestCaffe2Basic(TestCase):
+    def test_dummy_name(self):
+        n1 = dummy_name()
+        n2 = dummy_name()
+        assert n1 != n2, "Got same names in different calls: {}".format(n1)
+
     def test_relu_node_inplace(self):
         X = np.random.randn(3, 2).astype(np.float32)
         Y_ref = np.clip(X, 0, np.inf)

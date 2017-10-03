@@ -15,61 +15,19 @@ from caffe2.python import core, workspace
 from caffe2.proto import caffe2_pb2
 import caffe2.python.utils
 from onnx import onnx_pb2, checker
-from onnx.onnx_pb2 import TensorProto, AttributeProto
+from onnx.onnx_pb2 import GraphProto, TensorProto, AttributeProto
 import onnx.numpy_helper
 import onnx.defs
 from onnx.backend.base import Backend, BackendRep, Device, DeviceType, namedtupledict
 from onnx_caffe2.workspace import Workspace
+from onnx_caffe2.backend_rep import Caffe2Rep
+from onnx_caffe2.helper import dummy_name
 
 
 def get_device_option(device):
     m = {DeviceType.CPU: caffe2_pb2.CPU,
          DeviceType.CUDA: caffe2_pb2.CUDA}
     return core.DeviceOption(m[device.type], device.device_id)
-
-
-def get_name_scope(device):
-    if device.type == DeviceType.CUDA:
-        return 'gpu_{}'.format(device.device_id)
-    return ''
-
-
-class Caffe2Rep(BackendRep):
-    def __init__(self, predict_net, device, workspace, uninitialized):
-        super(Caffe2Rep, self).__init__()
-        self.predict_net = predict_net
-        self.device = device
-        self.workspace = workspace
-        # The list of uninitialized external_inputs in workspace, we need this to
-        # pair the name with given sequence inputs.
-        self.uninitialized = uninitialized
-        self.net_created = False
-
-    def run(self, inputs, **kwargs):
-        super(Caffe2Rep, self).run(inputs, **kwargs)
-        with self.workspace:
-            predict_net, device = self.predict_net, self.device
-            with core.DeviceScope(get_device_option(device)):
-                if isinstance(inputs, dict):
-                    with core.NameScope(get_name_scope(device)):
-                        for key, value in inputs.items():
-                            workspace.FeedBlob(key, value)
-                elif isinstance(inputs, list) or isinstance(inputs, tuple):
-                    assert len(self.uninitialized) == len(inputs), \
-                           'Caffe2Rep.Run: length of input must equal to the length of Uninitialized list: {}, \
-                            did you initialize the input of the graph in init_graph/initializer?'.format(self.uninitialized)
-                    for i, value in enumerate(inputs):
-                        # namescope already baked into protobuf
-                        workspace.FeedBlob(self.uninitialized[i], value)
-                else:
-                    # single input
-                    workspace.FeedBlob(self.uninitialized[0], inputs)
-                if not self.net_created:
-                    workspace.CreateNet(predict_net)
-                    self.net_created = True
-                workspace.RunNet(predict_net.name)
-            output_values = [workspace.FetchBlob(name) for name in predict_net.external_output]
-            return namedtupledict('Outputs', predict_net.external_output)(*output_values)
 
 
 class OnnxAttributes(dict):
@@ -147,21 +105,10 @@ class Caffe2Backend(Backend):
         'GlobalAveragePool':    'AveragePool',
     }
 
-    _conv_transpose_unpool_renamed_attrs  = {'kernel_shape': 'kernels'}
-    _conv_pool_op_renamed_attrs           = {'kernel_shape': 'kernels'}
-
-    # NB: domain is ONNX operator names.  This only really makes
-    # sense in the context of _renamed_operators as well
-    _renamed_attrs = {
+    _global_renamed_attrs = {'kernel_shape': 'kernels'}
+    _per_op_renamed_attrs = {
         'Squeeze':              {'axes': 'dims'},
         'Transpose':            {'perm': 'axes'},
-        'Caffe2ConvTranspose':  _conv_transpose_unpool_renamed_attrs,
-        'Conv':                 _conv_pool_op_renamed_attrs,
-        'MaxPool':              _conv_pool_op_renamed_attrs,
-        'GlobalMaxPool':        _conv_pool_op_renamed_attrs,
-        'AveragePool':          _conv_pool_op_renamed_attrs,
-        'GlobalAveragePool':    _conv_pool_op_renamed_attrs,
-        'ChannelShuffle':       {'kernel_shape': 'kernels'},
     }
 
     # operators whose behavior is different beyond renaming
@@ -188,12 +135,11 @@ class Caffe2Backend(Backend):
                 assert(len(node.input) == len(inputs))
                 for key, value in zip(node.input, inputs):
                     workspace.FeedBlob(key, value)
-            env = {}
-            for input in node.input:
-                env[input] = input
+
+            cls._inplace_rewrite([node])
             workspace.RunOperatorOnce(
-                cls._onnx_node_to_caffe2_op(node, env))
-            output_values = [workspace.FetchBlob(env[name]) for name in node.output]
+                cls._onnx_node_to_caffe2_op(node))
+            output_values = [workspace.FetchBlob(name) for name in node.output]
             return namedtupledict('Outputs', node.output)(*output_values)
 
     @classmethod
@@ -247,7 +193,7 @@ class Caffe2Backend(Backend):
         return c2_op
 
     @classmethod
-    def _create_constant(cls, n, env):
+    def _create_constant(cls, n):
         assert len(n.outputs) == 1
         return cls._create_tensor_filling_op(n.attrs["value"], n.outputs[0])
 
@@ -283,7 +229,7 @@ class Caffe2Backend(Backend):
     # differently.
 
     @classmethod
-    def _create_conv_pool_op_base(cls, n, env):
+    def _create_conv_pool_op_base(cls, n):
         if n.op_type.startswith('Global'):
             n.attrs['global_pooling'] = 1
 
@@ -297,13 +243,13 @@ class Caffe2Backend(Backend):
                 # Caffe2 requires pads to be twice the size of kernels.
                 n.attrs['pads'] = pads * 2
 
-        return cls._translate_onnx(n, env)
+        return cls._common_onnx_node_to_caffe2_op(n)
 
     @classmethod
-    def _create_reshape(cls, n, env):
-        c2_op = cls._translate_onnx(n, env)
+    def _create_reshape(cls, n):
+        c2_op = cls._common_onnx_node_to_caffe2_op(n)
         # Caffe2 has an extra output
-        c2_op.output.extend([env.fresh()])
+        c2_op.output.append(dummy_name())
         return c2_op
 
     @classmethod
@@ -317,126 +263,127 @@ class Caffe2Backend(Backend):
         there is no way we can know which blob is the input of the predict_graph.
         '''
         super(Caffe2Backend, cls).prepare(predict_model, device, **kwargs)
+
         if init_model:
             checker.check_model(init_model)
 
+        predict_net = cls.onnx_graph_to_caffe2_net(predict_model.graph)
+        predict_net.device_option.CopyFrom(get_device_option(Device(device)))
+
         ws = Workspace()
-        device = Device(device)
-
-        predict_net, _ = cls.onnx_graph_to_caffe2_net(predict_model.graph)
-        predict_net.device_option.CopyFrom(get_device_option(device))
-
-        with ws, core.DeviceScope(get_device_option(device)):
+        with ws, core.DeviceScope(predict_net.device_option):
             for init_tensor in predict_model.graph.initializer:
-                workspace.FeedBlob(init_tensor.name, onnx.numpy_helper.to_array(init_tensor))
+                workspace.FeedBlob(init_tensor.name,
+                                   onnx.numpy_helper.to_array(init_tensor))
             if init_model:
-                init_net, _ = cls.onnx_graph_to_caffe2_net(init_model.graph)
+                init_net = cls.onnx_graph_to_caffe2_net(init_model.graph)
                 workspace.RunNetOnce(init_net)
             uninitialized = [x
                              for x in predict_net.external_input
                              if not workspace.HasBlob(x)]
 
-        return Caffe2Rep(predict_net, device, ws, uninitialized)
+        return Caffe2Rep(predict_net, ws, uninitialized)
 
     @classmethod
     # TODO: This method needs a refactor for clarity
-    def _onnx_node_to_caffe2_op(cls, node_def, env):
-        # This needs to be done for special operators and regular ones
-        for output in node_def.output:
-            if output not in env:
-                env[output] = output
-
+    def _onnx_node_to_caffe2_op(cls, node_def):
         if node_def.op_type in cls._special_operators:
             translator = getattr(cls, cls._special_operators[node_def.op_type])
         else:
-            translator = cls._translate_onnx
-        return translator(OnnxNode(node_def), env)
+            translator = cls._common_onnx_node_to_caffe2_op
+        return translator(OnnxNode(node_def))
 
     @classmethod
-    def _translate_onnx(cls, onnx_node, env):
+    def _common_onnx_node_to_caffe2_op(cls, onnx_node):
         """
         This translator performs the basic translation of ONNX nodes into
         Caffe2 operators.  Besides doing a straightforward marshalling from
         one format to another, it also does these extra things:
 
           - Renames operators based on '_renamed_operators'
-          - Renames attributes based on '_renamed_attrs'
-          - Handles "consumed_inputs" attribute so that inplace operations are
-            encoded correctly in Caffe2.
+          - Renames attributes based on '_global_renamed_attrs' and
+            '_per_op_renamed_attrs'
 
         If you're writing a custom translator, consider calling this first,
         and then fixing things up further.
         """
         c2_op = caffe2_pb2.OperatorDef()
 
-        c2_op.input.extend([env[i] for i in onnx_node.inputs])
-
-        for output in onnx_node.outputs:
-            env[output] = output
-        # when consumed_inputs exist, we need to
-        # rewrite the outputs to re-use these inputs to
-        # support Caffe2-style in-place operators.
-        if onnx_node.consumed_inputs:
-            schema = onnx.defs.get_schema(onnx_node.op_type)
-            for i, input in enumerate(onnx_node.inputs):
-                if onnx_node.consumed_inputs[i] != 0:
-                    # for each consumed input, the schema for the op
-                    # tells us which output (output_idx) that
-                    # this consumed input becomes
-                    _, output_idx = schema.consumed(i)
-                    # consumed outputs are not always present
-                    # for instance batch norm in test mode
-                    # does not return the consumed inputs
-                    if output_idx < len(onnx_node.outputs):
-                        # rather than use its ONNX name
-                        # use the original input name for the blob
-                        # that will be consumed
-                        env[onnx_node.outputs[output_idx]] = env[input]
-
-        c2_op.output.extend([env[i] for i in onnx_node.outputs])
+        c2_op.input.extend(onnx_node.inputs)
+        c2_op.output.extend(onnx_node.outputs)
         c2_op.name = onnx_node.name
-        onnx_op = onnx_node.op_type
-        c2_op.type = cls._renamed_operators.get(onnx_op, onnx_op)
+
+        onnx_op_type = onnx_node.op_type
+        c2_op.type = cls._renamed_operators.get(onnx_op_type, onnx_op_type)
 
         def kmap(k):
-            return cls._renamed_attrs.get(onnx_op, {}).get(k, k)
+            if (onnx_op_type in cls._per_op_renamed_attrs and
+                k in cls._per_op_renamed_attrs[onnx_op_type]):
+                return cls._per_op_renamed_attrs[onnx_op_type][k]
+            if k in cls._global_renamed_attrs:
+                return cls._global_renamed_attrs[k]
+            return k
         c2_op.arg.extend(onnx_node.attrs.caffe2(kmap=kmap))
+
         return c2_op
 
 
     @classmethod
-    def onnx_graph_to_caffe2_net(cls, graph_def):
+    def _inplace_rewrite(cls, graph_or_nodes):
+        '''
+        currently we use this to translate ONNX-style
+        consumed_input annotations to Caffe2-style in place
+        updates (use same input and output names).
+        '''
+        is_graph = isinstance(graph_or_nodes, GraphProto)
+        if is_graph:
+            nodes = graph_or_nodes.node
+        else:
+            nodes = graph_or_nodes
 
-        # This is a hotfix to handle caffe2 frontend which sometimes
-        # creates ONNX graphs with edges which are not declared anywhere.
-        # See resnet50 for an example.
-        class RenameEnv(dict):
-            def __init__(self):
-                self.unique = 0
-            def __missing__(self, key):
-                return key
-            def fresh(self):
-                self.unique += 1
-                # TODO: Make this robust against an adversarial model namer
-                return "_onnx_dummy" + str(self.unique)
+        renamed = {}
+
+        for node in nodes:
+            node.input[:] = [renamed.get(input_name, input_name)
+                             for input_name in node.input]
+            consumed_inputs = OnnxNode(node).consumed_inputs or []
+            output_idxes = set(range(len(node.output)))
+            schema = onnx.defs.get_schema(node.op_type)
+            for i, consumed in enumerate(consumed_inputs):
+                if not consumed:
+                    continue
+                _, output_idx = schema.consumed(i)
+                # consumed outputs are not always present
+                # for instance batch norm in test mode
+                # does not return the consumed inputs
+                if output_idx < len(node.output):
+                    output_idxes.remove(output_idx)
+                    old_val = node.output[output_idx]
+                    new_val = node.input[i]
+                    node.output[output_idx] = new_val
+                    renamed[old_val] = new_val
+            for idx in output_idxes:
+                name = node.output[idx]
+                node.output[idx] = renamed.get(name, name)
+        if is_graph:
+            for output in graph_or_nodes.output:
+                output.name = renamed.get(output.name, output.name)
+
+    @classmethod
+    def onnx_graph_to_caffe2_net(cls, graph_def):
+        cls._inplace_rewrite(graph_def)
 
         net_def = caffe2_pb2.NetDef()
         net_def.name = graph_def.name
 
-        # environment from ONNX name to Caffe2 name
-        # currently we use this to translate ONNX-style
-        # consumed_input annotations to Caffe2-style in place
-        # updates with repeated input/output names
-        env = RenameEnv()
-        for value_info in graph_def.input:
-            env[value_info.name] = value_info.name
-        net_def.op.extend([cls._onnx_node_to_caffe2_op(node, env)
+        net_def.op.extend([cls._onnx_node_to_caffe2_op(node)
                            for node in graph_def.node])
         net_def.external_input.extend(
             value_info.name for value_info in graph_def.input)
         net_def.external_output.extend(
-            [env[value_info.name] for value_info in graph_def.output])
-        return net_def, env
+            value_info.name for value_info in graph_def.output)
+
+        return net_def
 
     @classmethod
     def onnx_initializer_to_caffe2_init_net(cls, initializer, init_net_name='init'):

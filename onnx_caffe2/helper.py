@@ -12,6 +12,12 @@ from onnx.backend.base import namedtupledict
 from onnx_caffe2.workspace import Workspace
 
 
+def dummy_name(seed=[0]):
+    res = 'OC2_DUMMY_{}'.format(seed[0])
+    seed[0] += 1
+    return res
+
+
 def make_model(graph, **kwargs):
     kwargs.setdefault('producer_name', 'onnx-caffe2')
     return helper.make_model(graph=graph, **kwargs)
