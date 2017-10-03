@@ -64,8 +64,8 @@ class TestConversion(TestCase):
         graph_def = helper.make_graph(
             [node_def],
             "test",
-            ["X"],
-            ["Y"],
+            [helper.make_tensor_value_info("X", onnx_pb2.TensorProto.FLOAT, (2, 2))],
+            [helper.make_tensor_value_info("Y", onnx_pb2.TensorProto.FLOAT, (2, 2))],
             initializer=[helper.make_tensor("X",
                                             onnx_pb2.TensorProto.FLOAT,
                                             [2, 2],
