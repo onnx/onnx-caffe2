@@ -428,12 +428,14 @@ class Caffe2Backend(Backend):
         # consumed_input annotations to Caffe2-style in place
         # updates with repeated input/output names
         env = RenameEnv()
-        for input in graph_def.input:
-            env[input] = input
+        for value_info in graph_def.input:
+            env[value_info.name] = value_info.name
         net_def.op.extend([cls._onnx_node_to_caffe2_op(node, env)
                            for node in graph_def.node])
-        net_def.external_input.extend(graph_def.input)
-        net_def.external_output.extend([env[o] for o in graph_def.output])
+        net_def.external_input.extend(
+            value_info.name for value_info in graph_def.input)
+        net_def.external_output.extend(
+            [env[value_info.name] for value_info in graph_def.output])
         return net_def, env
 
     @classmethod
