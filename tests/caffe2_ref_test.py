@@ -39,8 +39,8 @@ class TestCaffe2Basic(TestCase):
         graph_def = make_graph(
             [node_def],
             name="test",
-            inputs=[make_tensor_value_info("X", onnx.TensorProto.FLOAT, [1, 2])],
-            outputs=[make_tensor_value_info("X", onnx.TensorProto.FLOAT, [1, 2])])
+            inputs=[make_tensor_value_info("X", onnx.TensorProto.FLOAT, [3, 2])],
+            outputs=[make_tensor_value_info("X", onnx.TensorProto.FLOAT, [3, 2])])
         c2_rep = c2.prepare(make_model(graph_def))
         output = c2_rep.run({"X": X})
         np.testing.assert_almost_equal(output.X, Y_ref)
@@ -58,8 +58,8 @@ class TestCaffe2Basic(TestCase):
         graph_def = make_graph(
             [node_def],
             name="test",
-            inputs=[make_tensor_value_info("X", onnx.TensorProto.FLOAT, [1, 2])],
-            outputs=[make_tensor_value_info("Y", onnx.TensorProto.FLOAT, [1, 2])])
+            inputs=[make_tensor_value_info("X", onnx.TensorProto.FLOAT, [3, 2])],
+            outputs=[make_tensor_value_info("Y", onnx.TensorProto.FLOAT, [3, 2])])
         c2_rep = c2.prepare(make_model(graph_def))
         output = c2_rep.run(X)
         np.testing.assert_almost_equal(output.Y, Y_ref)
