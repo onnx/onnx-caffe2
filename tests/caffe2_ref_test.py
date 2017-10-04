@@ -103,6 +103,60 @@ class TestCaffe2Basic(TestCase):
         output = c2_rep.run({"X": X, "Y": Y})
         np.testing.assert_almost_equal(output["W"], W_ref)
 
+    def test_gemm(self):
+        # simple
+        A = np.random.randn(3, 2).astype(np.float32)
+        B = np.random.randn(2, 4).astype(np.float32)
+        C = np.random.randn(3, 4).astype(np.float32)
+        node_def = make_node(
+            'Gemm',
+            ['A', 'B', 'C'],
+            ["Y"])
+        output = c2.run_node(node_def, [A, B, C])
+        np.testing.assert_almost_equal(output["Y"], np.dot(A, B) + C)
+
+        # transA
+        A = np.transpose(A)
+        node_def = make_node(
+            'Gemm',
+            ['A', 'B', 'C'],
+            ["Y"],
+            transA=True)
+        output = c2.run_node(node_def, [A, B, C])
+        np.testing.assert_almost_equal(
+            output["Y"],
+            np.dot(np.transpose(A), B) + C)
+        # revert A
+        A = np.transpose(A)
+
+        # transB
+        B = np.transpose(B)
+        node_def = make_node(
+            'Gemm',
+            ['A', 'B', 'C'],
+            ["Y"],
+            transB=True)
+        output = c2.run_node(node_def, [A, B, C])
+        np.testing.assert_almost_equal(
+            output["Y"],
+            np.dot(A, np.transpose(B)) + C)
+        # revert A
+        B = np.transpose(B)
+
+        # scale
+        alpha = np.random.random()
+        beta = np.random.random()
+        node_def = make_node(
+            'Gemm',
+            ['A', 'B', 'C'],
+            ["Y"],
+            alpha=alpha,
+            beta=beta)
+        output = c2.run_node(node_def, [A, B, C])
+        np.testing.assert_almost_equal(
+            output["Y"],
+            alpha * np.dot(A, B) + beta * C)
+
 
 class TestCaffe2End2End(TestCase):
     def _model_dir(self, model):

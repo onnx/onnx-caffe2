@@ -7,6 +7,7 @@ from __future__ import division
 from __future__ import print_function
 from __future__ import unicode_literals
 
+import collections
 import contextlib
 from future.utils import bytes_to_native_str
 
@@ -122,6 +123,7 @@ class Caffe2Backend(Backend):
         'GlobalMaxPool': '_create_conv_pool_op_base',
         'MaxPool': '_create_conv_pool_op_base',
         'Reshape': '_create_reshape',
+        'Gemm': '_create_gemm',
     }
     @classmethod
     def run_node(cls, node, inputs):
@@ -137,8 +139,9 @@ class Caffe2Backend(Backend):
                     workspace.FeedBlob(key, value)
 
             cls._inplace_rewrite([node])
-            workspace.RunOperatorOnce(
-                cls._onnx_node_to_caffe2_op(node))
+            ops = cls._onnx_node_to_caffe2_op(node)
+            for op in ops:
+                workspace.RunOperatorOnce(op)
             output_values = [workspace.FetchBlob(name) for name in node.output]
             return namedtupledict('Outputs', node.output)(*output_values)
 
@@ -196,6 +199,33 @@ class Caffe2Backend(Backend):
     def _create_constant(cls, n):
         assert len(n.outputs) == 1
         return cls._create_tensor_filling_op(n.attrs["value"], n.outputs[0])
+
+    @classmethod
+    def _create_gemm(cls, n):
+        (A, B, C) = n.inputs
+        (Y,) = n.outputs
+        alpha = n.attrs.get('alpha', 1)
+        beta = n.attrs.get('beta', 1)
+
+        ops = []
+        if alpha != 1:
+            scaled_A = dummy_name()
+            ops.append(core.CreateOperator('Scale', [A], [scaled_A], scale=alpha))
+            A = scaled_A
+        if beta != 1:
+            scaled_C = dummy_name()
+            ops.append(core.CreateOperator('Scale', [C], [scaled_C], scale=beta))
+            C = scaled_C
+
+        AB = dummy_name()
+        ops.append(core.CreateOperator('MatMul',
+                                       [A, B],
+                                       [AB],
+                                       trans_a=n.attrs.get('transA', False),
+                                       trans_b=n.attrs.get('transB', False)))
+        ops.append(core.CreateOperator('Add', [AB, C], [Y]))
+
+        return ops
 
     # Note [Caffe2 ConvPoolOpBase]
     # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -291,7 +321,10 @@ class Caffe2Backend(Backend):
             translator = getattr(cls, cls._special_operators[node_def.op_type])
         else:
             translator = cls._common_onnx_node_to_caffe2_op
-        return translator(OnnxNode(node_def))
+        ops = translator(OnnxNode(node_def))
+        if not isinstance(ops, collections.Iterable):
+            ops = [ops]
+        return ops
 
     @classmethod
     def _common_onnx_node_to_caffe2_op(cls, onnx_node):
@@ -376,8 +409,9 @@ class Caffe2Backend(Backend):
         net_def = caffe2_pb2.NetDef()
         net_def.name = graph_def.name
 
-        net_def.op.extend([cls._onnx_node_to_caffe2_op(node)
-                           for node in graph_def.node])
+        for node in graph_def.node:
+            net_def.op.extend(cls._onnx_node_to_caffe2_op(node))
+
         net_def.external_input.extend(
             value_info.name for value_info in graph_def.input)
         net_def.external_output.extend(
