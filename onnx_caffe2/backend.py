@@ -104,12 +104,14 @@ class Caffe2Backend(Backend):
         'Caffe2ConvTranspose':  'ConvTranspose',
         'GlobalMaxPool':        'MaxPool',
         'GlobalAveragePool':    'AveragePool',
+        'Pad':                  'PadImage',
     }
 
     _global_renamed_attrs = {'kernel_shape': 'kernels'}
     _per_op_renamed_attrs = {
         'Squeeze':              {'axes': 'dims'},
         'Transpose':            {'perm': 'axes'},
+        'Pad':                  {'paddings': 'pads'},
     }
 
     # operators whose behavior is different beyond renaming
@@ -124,6 +126,7 @@ class Caffe2Backend(Backend):
         'MaxPool': '_create_conv_pool_op_base',
         'Reshape': '_create_reshape',
         'Gemm': '_create_gemm',
+        'Pad': '_create_pad',
     }
     @classmethod
     def run_node(cls, node, inputs):
@@ -226,6 +229,12 @@ class Caffe2Backend(Backend):
         ops.append(core.CreateOperator('Add', [AB, C], [Y]))
 
         return ops
+
+    @classmethod
+    def _create_pad(cls, n):
+        if 'paddings' in n.attrs:
+            assert len(n.attrs['paddings']) == 4, 'Only support padding 2D Tensor'
+        return cls._common_onnx_node_to_caffe2_op(n)
 
     # Note [Caffe2 ConvPoolOpBase]
     # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
