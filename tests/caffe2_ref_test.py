@@ -107,7 +107,6 @@ class TestCaffe2End2End(TestCase):
 
     def _test_net(self,
                   net_name,
-                  use_initializer,
                   input_blob_dims=(1, 3, 224, 224),
                   decimal=7):
         np.random.seed(seed=0)
@@ -133,18 +132,20 @@ class TestCaffe2End2End(TestCase):
         inputs = [data]
         c2_outputs = c2_native_run_net(c2_init_net, c2_predict_net, inputs)
 
-        predict_model = c2_onnx.caffe2_net_to_onnx_model(c2_predict_net)
-
-        if use_initializer:
-            # Test using initializers
-            initializers = c2_onnx.caffe2_init_net_to_initializer(c2_init_net)
-            predict_model.graph.initializer.extend(initializers)
-            c2_ir = c2.prepare(predict_model)
+        for input_name in c2_predict_net.external_input:
+            if input_name == 'data' or input_name == 'gpu_0/data':
+                break
         else:
-            # Test using separated init_graph
-            init_model = c2_onnx.caffe2_net_to_onnx_model(c2_init_net)
-            c2_ir = c2.prepare(predict_model, init_model=init_model)
-
+            raise RuntimeError(
+                'Could not find input name of model {}'.format(net_name))
+        predict_model = c2_onnx.caffe2_net_to_onnx_model(
+            predict_net=c2_predict_net,
+            init_net=c2_init_net,
+            value_info={
+                input_name: (onnx_pb2.TensorProto.FLOAT,
+                             (1, 3, 224, 224))
+            })
+        c2_ir = c2.prepare(predict_model)
         onnx_outputs = c2_ir.run(inputs)
         self.assertSameOutputs(c2_outputs, onnx_outputs, decimal=decimal)
         self.report_mem_usage(net_name)
@@ -172,41 +173,31 @@ class TestCaffe2End2End(TestCase):
                 exit(1)
 
     def test_alexnet(self):
-        self._test_net('bvlc_alexnet', use_initializer=True, decimal=4)
-        self._test_net('bvlc_alexnet', use_initializer=False, decimal=4)
+        self._test_net('bvlc_alexnet', decimal=4)
 
     def test_resnet50(self):
-        self._test_net('resnet50', use_initializer=True)
-        self._test_net('resnet50', use_initializer=False)
+        self._test_net('resnet50')
 
     def test_vgg16(self):
-        self._test_net('vgg16', use_initializer=True)
-        self._test_net('vgg16', use_initializer=False)
+        self._test_net('vgg16')
 
     def test_vgg19(self):
-        self._test_net('vgg19', use_initializer=True)
-        # This caused out of memory error on travis with Python 2
-        # self._test_net('vgg19', use_initializer=False)
+        self._test_net('vgg19')
 
     def test_inception_v1(self):
-        self._test_net('inception_v1', use_initializer=True, decimal=2)
-        self._test_net('inception_v1', use_initializer=False, decimal=2)
+        self._test_net('inception_v1', decimal=2)
 
     def test_inception_v2(self):
-        self._test_net('inception_v2', use_initializer=True)
-        self._test_net('inception_v2', use_initializer=False)
+        self._test_net('inception_v2')
 
     def test_squeezenet(self):
-        self._test_net('squeezenet', use_initializer=True)
-        self._test_net('squeezenet', use_initializer=False)
+        self._test_net('squeezenet')
 
     def test_shufflenet(self):
-        self._test_net('shufflenet', use_initializer=True)
-        self._test_net('shufflenet', use_initializer=False)
+        self._test_net('shufflenet')
 
     def test_densenet121(self):
-        self._test_net('densenet121', use_initializer=True)
-        self._test_net('densenet121', use_initializer=False)
+        self._test_net('densenet121')
 
 
 if __name__ == '__main__':
