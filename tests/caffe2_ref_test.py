@@ -254,6 +254,9 @@ class TestCaffe2End2End(TestCase):
     def test_vgg16(self):
         self._test_net('vgg16')
 
+    @unittest.skipIf(
+        os.environ.get('TRAVIS'),
+        'Running vgg19 on Travis with Python 2 keeps getting OOM!')
     def test_vgg19(self):
         self._test_net('vgg19')
 
