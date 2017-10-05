@@ -11,7 +11,7 @@ from __future__ import unicode_literals
 import re
 
 import caffe2
-from onnx import onnx_pb2, checker, numpy_helper
+from onnx import onnx_pb2, checker, numpy_helper, mapping
 import onnx.helper
 from onnx_caffe2.helper import make_model, c2_native_run_net
 import onnx.defs
@@ -312,13 +312,22 @@ def caffe2_net_to_onnx_graph(predict_net,
     missing = (set(list(predict_net.external_output)) -
                set(value_info.keys()))
     if missing:
+        inputs = {}
+        for name in predict_net.external_input:
+            elem_type, shape = value_info[name]
+            inputs[name] = np.random.randn(*shape).astype(
+                mapping.TENSOR_TYPE_TO_NP_TYPE[elem_type])
+
         outputs = c2_native_run_net(
             init_net,
             predict_net,
-            {})
-        for output_name in missing:
-            value_info[output_name] = (onnx_pb2.TensorProto.FLOAT,
-                                       (1, 3, 224, 224))
+            inputs)
+
+        for name in missing:
+            output = outputs[name]
+            elem_type = mapping.NP_TYPE_TO_TENSOR_TYPE[output.dtype]
+            shape = output.shape
+            value_info[name] = (elem_type, shape)
 
     graph_def = onnx_pb2.GraphProto()
     graph_def.name = predict_net.name

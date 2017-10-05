@@ -2,6 +2,8 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import json
+
 from caffe2.proto import caffe2_pb2
 import click
 import numpy as np
@@ -24,12 +26,17 @@ import onnx_caffe2.frontend as c2_onnx
 @click.option('--caffe2-init-net',
               type=click.File('rb'),
               help="Path of the caffe2 init net pb file")
+@click.option('--value-info',
+              type=str,
+              help='A json string providing the '
+              'type and shape information of the inputs')
 @click.option('-o', '--output', required=True,
               type=click.File('wb'),
               help='Output path for the onnx model pb file')
 def caffe2_to_onnx(caffe2_net,
                    caffe2_net_name,
                    caffe2_init_net,
+                   value_info,
                    output):
     c2_net_proto = caffe2_pb2.NetDef()
     c2_net_proto.ParseFromString(caffe2_net.read())
@@ -38,14 +45,20 @@ def caffe2_to_onnx(caffe2_net,
             'The input caffe2 net does not have name, '
             '--caffe2-net-name must be provided')
     c2_net_proto.name = caffe2_net_name or c2_net_proto.name
-    onnx_model = c2_onnx.caffe2_net_to_onnx_model(c2_net_proto)
-
     if caffe2_init_net:
         c2_init_net_proto = caffe2_pb2.NetDef()
         c2_init_net_proto.ParseFromString(caffe2_init_net.read())
         c2_init_net_proto.name = '{}_init'.format(caffe2_net_name)
-        initializer = c2_onnx.caffe2_init_net_to_initializer(c2_init_net_proto)
-        onnx_model.graph.initializer.extend(initializer)
+    else:
+        c2_init_net_proto = None
+
+    if value_info:
+        value_info = json.loads(value_info)
+
+    onnx_model = c2_onnx.caffe2_net_to_onnx_model(
+        predict_net=c2_net_proto,
+        init_net=c2_init_net_proto,
+        value_info=value_info)
 
     output.write(onnx_model.SerializeToString())
 
