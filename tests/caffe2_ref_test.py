@@ -157,6 +157,20 @@ class TestCaffe2Basic(TestCase):
             output["Y"],
             alpha * np.dot(A, B) + beta * C)
 
+        # broadcast
+        C = np.random.randn(4).astype(np.float32)
+        node_def = make_node(
+            'Gemm',
+            ['A', 'B', 'C'],
+            ["Y"],
+            alpha=alpha,
+            beta=beta,
+            broadcast=1)
+        output = c2.run_node(node_def, [A, B, C])
+        np.testing.assert_almost_equal(
+            output["Y"],
+            alpha * np.dot(A, B) + beta * C)
+
 
 class TestCaffe2End2End(TestCase):
     def _model_dir(self, model):

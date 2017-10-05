@@ -207,8 +207,8 @@ class Caffe2Backend(Backend):
     def _create_gemm(cls, n):
         (A, B, C) = n.inputs
         (Y,) = n.outputs
-        alpha = n.attrs.get('alpha', 1)
-        beta = n.attrs.get('beta', 1)
+        alpha = n.attrs.get('alpha', 1.)
+        beta = n.attrs.get('beta', 1.)
 
         ops = []
         if alpha != 1:
@@ -224,9 +224,12 @@ class Caffe2Backend(Backend):
         ops.append(core.CreateOperator('MatMul',
                                        [A, B],
                                        [AB],
-                                       trans_a=n.attrs.get('transA', False),
-                                       trans_b=n.attrs.get('transB', False)))
-        ops.append(core.CreateOperator('Add', [AB, C], [Y]))
+                                       trans_a=n.attrs.get('transA', 0),
+                                       trans_b=n.attrs.get('transB', 0)))
+        ops.append(core.CreateOperator('Add',
+                                       [AB, C],
+                                       [Y],
+                                       broadcast=n.attrs.get('broadcast', 0)))
 
         return ops
 
