@@ -21,11 +21,16 @@ import numpy as np
 import google.protobuf.text_format
 from caffe2.python.models.download import downloadFromURLToFile, getURLFromName, deleteDirectory
 
-from onnx_caffe2.helper import make_model
+from onnx_caffe2.helper import make_model, dummy_name
 from test_utils import TestCase
 
 
 class TestCaffe2Basic(TestCase):
+    def test_dummy_name(self):
+        n1 = dummy_name()
+        n2 = dummy_name()
+        assert n1 != n2, "Got same names in different calls: {}".format(n1)
+
     def test_relu_node_inplace(self):
         X = np.random.randn(3, 2).astype(np.float32)
         Y_ref = np.clip(X, 0, np.inf)
@@ -97,6 +102,60 @@ class TestCaffe2Basic(TestCase):
         c2_rep = c2.prepare(make_model(graph_def))
         output = c2_rep.run({"X": X, "Y": Y})
         np.testing.assert_almost_equal(output["W"], W_ref)
+
+    def test_gemm(self):
+        # simple
+        A = np.random.randn(3, 2).astype(np.float32)
+        B = np.random.randn(2, 4).astype(np.float32)
+        C = np.random.randn(3, 4).astype(np.float32)
+        node_def = make_node(
+            'Gemm',
+            ['A', 'B', 'C'],
+            ["Y"])
+        output = c2.run_node(node_def, [A, B, C])
+        np.testing.assert_almost_equal(output["Y"], np.dot(A, B) + C)
+
+        # transA
+        A = np.transpose(A)
+        node_def = make_node(
+            'Gemm',
+            ['A', 'B', 'C'],
+            ["Y"],
+            transA=True)
+        output = c2.run_node(node_def, [A, B, C])
+        np.testing.assert_almost_equal(
+            output["Y"],
+            np.dot(np.transpose(A), B) + C)
+        # revert A
+        A = np.transpose(A)
+
+        # transB
+        B = np.transpose(B)
+        node_def = make_node(
+            'Gemm',
+            ['A', 'B', 'C'],
+            ["Y"],
+            transB=True)
+        output = c2.run_node(node_def, [A, B, C])
+        np.testing.assert_almost_equal(
+            output["Y"],
+            np.dot(A, np.transpose(B)) + C)
+        # revert A
+        B = np.transpose(B)
+
+        # scale
+        alpha = np.random.random()
+        beta = np.random.random()
+        node_def = make_node(
+            'Gemm',
+            ['A', 'B', 'C'],
+            ["Y"],
+            alpha=alpha,
+            beta=beta)
+        output = c2.run_node(node_def, [A, B, C])
+        np.testing.assert_almost_equal(
+            output["Y"],
+            alpha * np.dot(A, B) + beta * C)
 
 
 class TestCaffe2End2End(TestCase):

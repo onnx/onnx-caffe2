@@ -18,11 +18,6 @@ import onnx.defs
 from enum import Enum
 import numpy as np
 
-# Special translators for operators that are different between Caffe2 and
-# ONNX. In most cases, this should be empty - as the effort of ONNX is
-# to unify the operator definitions.
-_special_translator = {}
-
 # caffe2 arguments that needs to be removed
 _blacklist_caffe2_args = {'order', 'global_pooling',
                           'cudnn_exhaustive_search', 'use_cudnn'}
@@ -40,6 +35,7 @@ _renamed_args = {
     'ChannelShuffle': {'kernels': 'kernel_shape'},
 }
 
+
 class ArgType(Enum):
     NONE = 0
     FLOAT = 1
@@ -48,6 +44,7 @@ class ArgType(Enum):
     FLOATS = 4
     INTS = 5
     STRS = 6
+
 
 def get_caffe2_arg_type_and_val(caffe2_arg):
     if caffe2_arg.HasField('f'):
@@ -64,6 +61,7 @@ def get_caffe2_arg_type_and_val(caffe2_arg):
         return ArgType.STRS, caffe2_arg.strings
     return ArgType.NONE, None
 
+
 def onnx_attr_assign(onnx_attr, attr_type, attr_val):
     if attr_type == ArgType.FLOAT:
         onnx_attr.f = attr_val
@@ -77,6 +75,7 @@ def onnx_attr_assign(onnx_attr, attr_type, attr_val):
         onnx_attr.ints.extend(attr_val)
     elif attr_type == ArgType.STRS:
         onnx_attr.strings.extend(attr_val)
+
 
 def get_onnx_attrs(op_type, op_def):
     onnx_attrs = []
@@ -163,6 +162,7 @@ def get_node_op_type(op_def):
 
     return op_type
 
+
 def caffe2_op_to_node_def(op_def, env):
     node_def = onnx_pb2.NodeProto()
     # NB: This must happen BEFORE we start freshening inplace outputs
@@ -187,7 +187,8 @@ def caffe2_op_to_node_def(op_def, env):
                 consumes.append(0)
         else:
             if x in output_set:
-                raise RuntimeError("schema says consume not allowed, but caffe2 used inplace syntax")
+                raise RuntimeError(
+                    "schema says consume not allowed, but caffe2 used inplace syntax")
             consumes.append(0)
     if any(consumes):
         consumes_attr = onnx_pb2.AttributeProto()
@@ -260,7 +261,8 @@ def caffe2_init_net_to_initializer(init_net):
             }[init_op.type]
         except KeyError:
             raise RuntimeError(
-                "Can not translate init_net with operator '{}' to initializer".format(init_op.type)
+                "Can not translate init_net with operator '{}' "
+                "to initializer".format(init_op.type)
             )
         args = {a.name: a for a in init_op.arg}
         vals = getattr(args['values'], field_name)
