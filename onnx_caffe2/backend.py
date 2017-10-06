@@ -127,6 +127,7 @@ class Caffe2Backend(Backend):
         'Reshape': '_create_reshape',
         'Gemm': '_create_gemm',
         'Pad': '_create_pad',
+        'Concat': '_create_concat',
     }
     @classmethod
     def run_node(cls, node, inputs):
@@ -238,6 +239,16 @@ class Caffe2Backend(Backend):
         if 'paddings' in n.attrs:
             assert len(n.attrs['paddings']) == 4, 'Only support padding 2D Tensor'
         return cls._common_onnx_node_to_caffe2_op(n)
+
+    @classmethod
+    def _create_concat(cls, n):
+        # TODO: Caffe2 Concat has an extra output. It should be only
+        # used when doing training, so we should change Caffe2 to allow
+        # 1 output.
+        op = cls._common_onnx_node_to_caffe2_op(n)
+        assert len(op.output) == 1
+        op.output.append(dummy_name())
+        return op
 
     # Note [Caffe2 ConvPoolOpBase]
     # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
