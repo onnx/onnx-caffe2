@@ -204,6 +204,10 @@ def caffe2_op_to_node_def(op_def, env):
             return env.rename(out)
 
     node_def.output.extend(map(fresh_or_rename, op_def.output))
+    # TODO: refactor frontend to allow special handling for individual ops
+    if node_def.op_type == 'Concat':
+        assert len(node_def.output) == 2
+        del node_def.output[1]
 
     node_def.name = op_def.name
     attrs = get_onnx_attrs(node_def.op_type, op_def)
