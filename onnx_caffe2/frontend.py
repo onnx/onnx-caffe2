@@ -334,8 +334,6 @@ def caffe2_net_to_onnx_graph(predict_net,
     graph_def.initializer.extend(initializer)
     # This is a mapping from Caffe2 names to ONNX names
     name_map = NameMap()
-    # TODO: This is cheating. Invent some magic to infer the types and
-    # shapes of graph input and output
     graph_def.input.extend(
         onnx.helper.make_tensor_value_info(
             name=name_map.rename(name),
