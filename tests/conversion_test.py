@@ -2,7 +2,9 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import json
 import tempfile
+import textwrap
 
 from caffe2.proto import caffe2_pb2
 from caffe2.python import brew
@@ -20,8 +22,14 @@ class TestConversion(TestCase):
     def _run_command(self, cmd, *args, **kwargs):
         runner = CliRunner()
         result = runner.invoke(cmd, *args, **kwargs)
-        self.assertEqual(result.exit_code, 0, result.output)
-        assert not result.exception
+        self.assertEqual(result.exit_code, 0, textwrap.dedent('''
+        Command exited with non-zero exit code:
+        output: {}
+        exception: {}
+        exc_info: {}
+        '''.format(result.output,
+                   result.exception,
+                   result.exc_info)))
         return result
 
     def test_caffe2_to_onnx(self):
@@ -53,6 +61,33 @@ class TestConversion(TestCase):
         self.assertEqual(onnx_model.graph.node[0].op_type, 'Relu')
         self.assertEqual(len(onnx_model.graph.initializer), 1)
         self.assertEqual(onnx_model.graph.initializer[0].name, 'X')
+
+    def test_caffe2_to_onnx_value_info(self):
+        caffe2_net = tempfile.NamedTemporaryFile()
+        output = tempfile.NamedTemporaryFile()
+
+        model = ModelHelper(name='caffe2-to-onnx-test')
+        brew.relu(model, ["X"], "Y")
+        caffe2_net.write(model.net.Proto().SerializeToString())
+        caffe2_net.flush()
+
+        args = [caffe2_net.name, '--output', output.name]
+        self.assertRaisesRegexp(Exception,
+                                'value info',
+                                self._run_command, caffe2_to_onnx, args)
+
+        args.extend([
+            '--value-info',
+            json.dumps({
+                'X': (onnx_pb2.TensorProto.FLOAT, (2, 2)),
+            })])
+        result = self._run_command(caffe2_to_onnx, args)
+
+        onnx_model = onnx_pb2.ModelProto()
+        onnx_model.ParseFromString(output.read())
+        self.assertEqual(len(onnx_model.graph.node), 1)
+        self.assertEqual(onnx_model.graph.node[0].op_type, 'Relu')
+        self.assertEqual(len(onnx_model.graph.initializer), 0)
 
     def test_onnx_to_caffe2(self):
         onnx_model = tempfile.NamedTemporaryFile()

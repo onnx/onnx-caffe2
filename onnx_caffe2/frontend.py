@@ -8,15 +8,19 @@ from __future__ import division
 from __future__ import print_function
 from __future__ import unicode_literals
 
+import logging
 import re
 
 import caffe2
-from onnx import onnx_pb2, checker, numpy_helper
+from onnx import onnx_pb2, checker, numpy_helper, mapping
 import onnx.helper
-from onnx_caffe2.helper import make_model
+from onnx_caffe2.helper import make_model, c2_native_run_net
 import onnx.defs
 from enum import Enum
 import numpy as np
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # caffe2 arguments that needs to be removed
 _blacklist_caffe2_args = {'order', 'global_pooling',
@@ -283,33 +287,84 @@ def caffe2_init_net_to_initializer(init_net):
     return initializer
 
 
-def caffe2_net_to_onnx_model(net_def):
-    model_def = make_model(caffe2_net_to_onnx_graph(net_def))
+def caffe2_net_to_onnx_model(*args, **kwargs):
+    model_def = make_model(caffe2_net_to_onnx_graph(*args, **kwargs))
     checker.check_model(model_def)
     return model_def
 
 
-def caffe2_net_to_onnx_graph(net_def):
-    graph_def = onnx_pb2.GraphProto()
+def caffe2_net_to_onnx_graph(predict_net,
+                             init_net=None,
+                             value_info=None):
+    if value_info is None:
+        value_info = {}
+    if not isinstance(value_info, dict):
+        raise ValueError('Please pass value_info as a '
+                         'name -> (type, shape) dictionary')
+    if init_net:
+        initializer = caffe2_init_net_to_initializer(init_net)
+        value_info.update({init.name: (init.data_type, init.dims)
+                           for init in initializer})
+    else:
+        initializer = []
 
-    graph_def.name = net_def.name
+    # Check whether we have got type shape info of all input
+    missing = (set(list(predict_net.external_input)) -
+               set(value_info.keys()))
+    if missing:
+        raise RuntimeError('Could not find value info of inputs: {}'.format(
+            ', '.join(missing)))
+
+    # If there are missing type shape info of output,
+    # run the net once to find out!
+    missing = (set(list(predict_net.external_output)) -
+               set(value_info.keys()))
+    if missing:
+        inputs = {}
+        for name in predict_net.external_input:
+            elem_type, shape = value_info[name]
+            inputs[name] = np.random.randn(*shape).astype(
+                mapping.TENSOR_TYPE_TO_NP_TYPE[elem_type])
+
+        outputs = c2_native_run_net(
+            init_net,
+            predict_net,
+            inputs)
+
+        for name in missing:
+            output = outputs[name]
+            elem_type = mapping.NP_TYPE_TO_TENSOR_TYPE[output.dtype]
+            shape = output.shape
+            value_info[name] = (elem_type, shape)
+
+    graph_def = onnx_pb2.GraphProto()
+    graph_def.name = predict_net.name
+    graph_def.initializer.extend(initializer)
     # This is a mapping from Caffe2 names to ONNX names
     name_map = NameMap()
-    # TODO: This is cheating. Invent some magic to infer the types and
-    # shapes of graph input and output
     graph_def.input.extend(
         onnx.helper.make_tensor_value_info(
             name=name_map.rename(name),
-            elem_type=onnx_pb2.TensorProto.FLOAT,
-            shape=(1, 3, 224, 224))
-        for name in net_def.external_input)
+            elem_type=value_info[name][0],
+            shape=value_info[name][1])
+        for name in predict_net.external_input)
     graph_def.node.extend(
-        caffe2_op_to_node_def(op, name_map) for op in net_def.op)
+        caffe2_op_to_node_def(op, name_map) for op in predict_net.op)
+
+    all_output = set(sum((list(node.output) for node in graph_def.node),
+                         [init.name for init in graph_def.initializer]))
+    redundant_output = set(vi.name for vi in graph_def.output) - all_output
+    if redundant_output:
+        logger.warning(
+            'There are graph output not produced by any node or initializer: {}'
+            '! Will drop them.'.format(', '.join(redundant_output)))
     graph_def.output.extend(
         onnx.helper.make_tensor_value_info(
             name=name_map.rename(name),
-            elem_type=onnx_pb2.TensorProto.FLOAT,
-            shape=(1, 3, 224, 224))
-        for name in net_def.external_output)
+            elem_type=value_info[name][0],
+            shape=value_info[name][1])
+        for name in predict_net.external_output
+        if name in all_output)
+
     checker.check_graph(graph_def)
     return graph_def
