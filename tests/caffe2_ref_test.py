@@ -264,10 +264,10 @@ class TestCaffe2End2End(TestCase):
     def test_inception_v2(self):
         self._test_net('inception_v2')
 
-    @unittest.skip('Caffe2 ShuffleNet model has extra graph exteranl_outputs!')
     def test_squeezenet(self):
         self._test_net('squeezenet')
 
+    @unittest.skip('Caffe2 ShuffleNet model has extra graph exteranl_outputs!')
     def test_shufflenet(self):
         self._test_net('shufflenet')
 
