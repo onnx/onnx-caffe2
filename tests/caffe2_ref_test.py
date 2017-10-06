@@ -188,7 +188,7 @@ class TestCaffe2End2End(TestCase):
             self._download(net_name)
         c2_predict_pb = os.path.join(model_dir, 'predict_net.pb')
         c2_predict_net = caffe2_pb2.NetDef()
-        with open(c2_predict_pb, 'r') as f:
+        with open(c2_predict_pb, 'rb') as f:
             c2_predict_net.ParseFromString(f.read())
         c2_predict_net.name = net_name
 
