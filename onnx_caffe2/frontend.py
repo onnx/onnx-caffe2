@@ -8,6 +8,7 @@ from __future__ import division
 from __future__ import print_function
 from __future__ import unicode_literals
 
+import logging
 import re
 
 import caffe2
@@ -17,6 +18,9 @@ from onnx_caffe2.helper import make_model, c2_native_run_net
 import onnx.defs
 from enum import Enum
 import numpy as np
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # caffe2 arguments that needs to be removed
 _blacklist_caffe2_args = {'order', 'global_pooling',
@@ -346,11 +350,21 @@ def caffe2_net_to_onnx_graph(predict_net,
         for name in predict_net.external_input)
     graph_def.node.extend(
         caffe2_op_to_node_def(op, name_map) for op in predict_net.op)
+
+    all_output = set(sum((list(node.output) for node in graph_def.node),
+                         [init.name for init in graph_def.initializer]))
+    redundant_output = set(vi.name for vi in graph_def.output) - all_output
+    if redundant_output:
+        logger.warning(
+            'There are graph output not produced by any node or initializer: {}'
+            '! Will drop them.'.format(', '.join(redundant_output)))
     graph_def.output.extend(
         onnx.helper.make_tensor_value_info(
             name=name_map.rename(name),
             elem_type=value_info[name][0],
             shape=value_info[name][1])
-        for name in predict_net.external_output)
+        for name in predict_net.external_output
+        if name in all_output)
+
     checker.check_graph(graph_def)
     return graph_def
