@@ -74,23 +74,18 @@ def caffe2_to_onnx(caffe2_net,
               type=click.File('wb'),
               help='Output path for the caffe2 net file')
 @click.option('--init-net-output',
+              required=True,
               type=click.File('wb'),
               help='Output path for the caffe2 init net file')
-def onnx_to_caffe2(onnx_model, output, init_net_output):
+@click.option('--mobile',
+              required=False,
+              default=False,
+              type=bool,
+              help='Specify whether the exported caffe2 nets are for mobile')
+def onnx_to_caffe2(onnx_model, output, init_net_output, mobile):
     onnx_model_proto = onnx_pb2.ModelProto()
     onnx_model_proto.ParseFromString(onnx_model.read())
     graph_def = onnx_model_proto.graph
-
-    if graph_def.initializer:
-        if not init_net_output:
-            raise click.BadParameter(
-                'The input onnx model has initializer, '
-                '--init-net-output must be provided '
-                'for creating a separated caffe2 init net')
-        init_net = c2.onnx_initializer_to_caffe2_init_net(
-            graph_def.initializer)
-        init_net_output.write(init_net.SerializeToString())
-        del graph_def.initializer[:]
-
-    caffe2_net = c2.onnx_graph_to_caffe2_net(graph_def)
-    output.write(caffe2_net.SerializeToString())
+    init_net, predict_net = c2.onnx_graph_to_caffe2_net(graph_def, mobile)
+    init_net_output.write(init_net.SerializeToString())
+    output.write(predict_net.SerializeToString())

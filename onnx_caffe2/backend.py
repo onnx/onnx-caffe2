@@ -166,7 +166,7 @@ class Caffe2Backend(Backend):
         c2_values.name = "values"
 
         def tensor2list(onnx_tensor):
-            # Use the onnx.helper because the data may be raw
+            # Use the onnx.numpy_helper because the data may be raw
             return onnx.numpy_helper.to_array(onnx_tensor).flatten().tolist()
 
         if onnx_tensor.data_type == TensorProto.FLOAT:
@@ -328,17 +328,15 @@ class Caffe2Backend(Backend):
         if init_model:
             checker.check_model(init_model)
 
-        predict_net = cls.onnx_graph_to_caffe2_net(predict_model.graph)
+        init_net, predict_net = cls.onnx_graph_to_caffe2_net(predict_model.graph)
         predict_net.device_option.CopyFrom(get_device_option(Device(device)))
 
         ws = Workspace()
         with ws, core.DeviceScope(predict_net.device_option):
-            for init_tensor in predict_model.graph.initializer:
-                workspace.FeedBlob(init_tensor.name,
-                                   onnx.numpy_helper.to_array(init_tensor))
             if init_model:
-                init_net = cls.onnx_graph_to_caffe2_net(init_model.graph)
-                workspace.RunNetOnce(init_net)
+               _, init_net_from_model = cls.onnx_graph_to_caffe2_net(init_model.graph)
+               init_net.op.extend(init_net_from_model.op)
+            workspace.RunNetOnce(init_net)
             uninitialized = [x
                              for x in predict_net.external_input
                              if not workspace.HasBlob(x)]
@@ -434,28 +432,45 @@ class Caffe2Backend(Backend):
                 output.name = renamed.get(output.name, output.name)
 
     @classmethod
-    def onnx_graph_to_caffe2_net(cls, graph_def):
+    def onnx_graph_to_caffe2_net(cls, graph_def, mobile=False):
         cls._inplace_rewrite(graph_def)
-
-        net_def = caffe2_pb2.NetDef()
-        net_def.name = graph_def.name
+        if graph_def.initializer:
+            init_net = cls.onnx_initializer_to_caffe2_init_net(
+            graph_def.initializer)
+        else:
+            init_net = caffe2_pb2.NetDef()
+        predict_net = caffe2_pb2.NetDef()
+        predict_net.name = graph_def.name
 
         for node in graph_def.node:
-            net_def.op.extend(cls._onnx_node_to_caffe2_op(node))
+            predict_net.op.extend(cls._onnx_node_to_caffe2_op(node))
 
-        net_def.external_input.extend(
+        predict_net.external_input.extend(
             value_info.name for value_info in graph_def.input)
-        net_def.external_output.extend(
+        predict_net.external_output.extend(
             value_info.name for value_info in graph_def.output)
 
-        return net_def
+        if mobile:
+            def InitOpDef(x):
+                op_def = caffe2_pb2.OperatorDef()
+                op_def.output.extend([x])
+                op_def.type = 'GivenTensorFill'
+                arg = op_def.arg.add()
+                arg.name = 'values'
+                arg.floats.extend([1])
+                return op_def
+            # predictors require all referenced blobs to be initialized
+            initialized = [x.output[0] for x in init_net.op]
+            uninitialized = set(predict_net.external_input) - set(initialized)
+            init_net.op.extend([InitOpDef(x) for x in uninitialized])
+        return init_net, predict_net
 
     @classmethod
     def onnx_initializer_to_caffe2_init_net(cls, initializer, init_net_name='init'):
-        net_def = caffe2_pb2.NetDef()
-        net_def.name = init_net_name
-        net_def.op.extend(cls._create_tensor_filling_op(tp) for tp in initializer)
-        return net_def
+        init_net = caffe2_pb2.NetDef()
+        init_net.name = init_net_name
+        init_net.op.extend(cls._create_tensor_filling_op(tp) for tp in initializer)
+        return init_net
 
 
 prepare = Caffe2Backend.prepare

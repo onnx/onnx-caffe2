@@ -7,7 +7,6 @@ from caffe2.python import core, workspace
 from caffe2.proto import caffe2_pb2
 from onnx.backend.base import BackendRep, namedtupledict
 
-
 class Caffe2Rep(BackendRep):
     def __init__(self, predict_net, workspace, uninitialized):
         super(Caffe2Rep, self).__init__()
