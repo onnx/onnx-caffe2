@@ -88,4 +88,4 @@ def onnx_to_caffe2(onnx_model, output, init_net_output, mobile):
     graph_def = onnx_model_proto.graph
     init_net, predict_net = c2.onnx_graph_to_caffe2_net(graph_def, mobile)
     init_net_output.write(init_net.SerializeToString())
-    output.write(caffe2_net.SerializeToString())
+    output.write(predict_net.SerializeToString())
