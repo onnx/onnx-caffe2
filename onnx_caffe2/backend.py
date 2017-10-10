@@ -129,11 +129,13 @@ class Caffe2Backend(Backend):
         'Pad': '_create_pad',
         'Concat': '_create_concat',
     }
-    @classmethod
-    def run_node(cls, node, inputs):
-        super(Caffe2Backend, cls).run_node(node, inputs)
 
-        with Workspace(): # temporary!
+    @classmethod
+    def run_node(cls, node, inputs, device='CPU'):
+        super(Caffe2Backend, cls).run_node(node, inputs, device)
+
+        device_option = get_device_option(Device(device))
+        with Workspace(), core.DeviceScope(device_option):  # temporary!
             if isinstance(inputs, dict):
                 for key, value in inputs.items():
                     workspace.FeedBlob(key, value)

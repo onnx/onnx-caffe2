@@ -9,8 +9,8 @@ import onnx.backend.test
 
 import onnx_caffe2.backend as c2
 
-# unittest by default only looks for tests in current scope!
-_ = onnx.backend.test.BackendTest(c2).tests
+# import all test cases at global scope to make them visible to python.unittest
+globals().update(onnx.backend.test.BackendTest(c2).test_cases)
 
 
 if __name__ == '__main__':
