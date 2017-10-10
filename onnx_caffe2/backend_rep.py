@@ -6,8 +6,6 @@ from __future__ import unicode_literals
 from caffe2.python import core, workspace
 from caffe2.proto import caffe2_pb2
 from onnx.backend.base import BackendRep, namedtupledict
-import onnx.helper
-from onnx.onnx_pb2 import TensorProto
 
 class Caffe2Rep(BackendRep):
     def __init__(self, init_net, predict_net, workspace, uninitialized):
