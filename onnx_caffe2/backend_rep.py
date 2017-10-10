@@ -8,9 +8,8 @@ from caffe2.proto import caffe2_pb2
 from onnx.backend.base import BackendRep, namedtupledict
 
 class Caffe2Rep(BackendRep):
-    def __init__(self, init_net, predict_net, workspace, uninitialized):
+    def __init__(self, predict_net, workspace, uninitialized):
         super(Caffe2Rep, self).__init__()
-        self.init_net = init_net
         self.predict_net = predict_net
         self.workspace = workspace
         # The list of uninitialized external_inputs in workspace, we need this to
@@ -53,24 +52,3 @@ class Caffe2Rep(BackendRep):
                              for name in self.predict_net.external_output]
             return namedtupledict('Outputs',
                                   self.predict_net.external_output)(*output_values)
-    def export_to_mobile(self, net_name='net'):
-        init_net_fn = '{}_init_net.pb'.format(net_name)
-        predict_net_fn = '{}_predict_net.pb'.format(net_name)
-        init_net_export = caffe2_pb2.NetDef()
-        init_net_export.CopyFrom(self.init_net)
-        def InitOpDef(x):
-            op_def = caffe2_pb2.OperatorDef()
-            op_def.output.extend([x])
-            op_def.type = 'GivenTensorFill'
-            arg = op_def.arg.add()
-            arg.name = 'values'
-            arg.floats.extend([1])
-            return op_def
-        # predictors require all referenced blobs to be initialized
-        init_net_export.op.extend([InitOpDef(x) for x in self.uninitialized])
-        with open(init_net_fn, 'wb') as f:
-            f.write(init_net_export.SerializeToString())
-        with open(predict_net_fn, 'wb') as f:
-            f.write(self.predict_net.SerializeToString())
-        with open(predict_net_fn + 'txt', 'w') as f:
-            f.write(str(self.predict_net))
