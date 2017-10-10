@@ -18,6 +18,7 @@ import caffe2.python.utils
 from onnx import onnx_pb2, checker
 from onnx.onnx_pb2 import GraphProto, TensorProto, AttributeProto
 import onnx.numpy_helper
+import onnx.helper
 import onnx.defs
 from onnx.backend.base import Backend, BackendRep, Device, DeviceType, namedtupledict
 from onnx_caffe2.workspace import Workspace
@@ -330,17 +331,17 @@ class Caffe2Backend(Backend):
 
         ws = Workspace()
         with ws, core.DeviceScope(predict_net.device_option):
-            for init_tensor in predict_model.graph.initializer:
-                workspace.FeedBlob(init_tensor.name,
-                                   onnx.numpy_helper.to_array(init_tensor))
             if init_model:
                 init_net = cls.onnx_graph_to_caffe2_net(init_model.graph)
-                workspace.RunNetOnce(init_net)
+            else:
+                init_net = None
+            init_net = cls.onnx_initializer_to_caffe2_init_net(predict_model.graph.initializer, init_net=init_net)
+            workspace.RunNetOnce(init_net)
             uninitialized = [x
                              for x in predict_net.external_input
                              if not workspace.HasBlob(x)]
 
-        return Caffe2Rep(predict_net, ws, uninitialized)
+        return Caffe2Rep(init_net, predict_net, ws, uninitialized)
 
     @classmethod
     # TODO: This method needs a refactor for clarity
@@ -448,11 +449,12 @@ class Caffe2Backend(Backend):
         return net_def
 
     @classmethod
-    def onnx_initializer_to_caffe2_init_net(cls, initializer, init_net_name='init'):
-        net_def = caffe2_pb2.NetDef()
-        net_def.name = init_net_name
-        net_def.op.extend(cls._create_tensor_filling_op(tp) for tp in initializer)
-        return net_def
+    def onnx_initializer_to_caffe2_init_net(cls, initializer, init_net_name='init', init_net=None):
+        if init_net is None:
+            init_net = caffe2_pb2.NetDef()
+            init_net.name = init_net_name
+        init_net.op.extend(cls._create_tensor_filling_op(tp) for tp in initializer)
+        return init_net
 
 
 prepare = Caffe2Backend.prepare
