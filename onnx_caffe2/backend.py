@@ -18,7 +18,6 @@ import caffe2.python.utils
 from onnx import onnx_pb2, checker
 from onnx.onnx_pb2 import GraphProto, TensorProto, AttributeProto
 import onnx.numpy_helper
-import onnx.helper
 import onnx.defs
 from onnx.backend.base import Backend, BackendRep, Device, DeviceType, namedtupledict
 from onnx_caffe2.workspace import Workspace
@@ -165,7 +164,7 @@ class Caffe2Backend(Backend):
         c2_values.name = "values"
 
         def tensor2list(onnx_tensor):
-            # Use the onnx.helper because the data may be raw
+            # Use the onnx.numpy_helper because the data may be raw
             return onnx.numpy_helper.to_array(onnx_tensor).flatten().tolist()
 
         if onnx_tensor.data_type == TensorProto.FLOAT:
