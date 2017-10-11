@@ -3,6 +3,7 @@ from __future__ import division
 from __future__ import print_function
 from __future__ import unicode_literals
 
+import json
 import os
 import sys
 import unittest
@@ -13,7 +14,7 @@ import onnx
 from onnx.helper import make_node, make_graph, make_tensor, make_tensor_value_info
 from onnx_caffe2.helper import make_model, c2_native_run_net
 
-from onnx import onnx_pb2
+from onnx import onnx_pb2, defs
 import onnx_caffe2.frontend as c2_onnx
 import onnx_caffe2.backend as c2
 
@@ -201,22 +202,14 @@ class TestCaffe2End2End(TestCase):
         n, c, h, w = input_blob_dims
         data = np.random.randn(n, c, h, w).astype(np.float32)
         inputs = [data]
-        c2_outputs = c2_native_run_net(c2_init_net, c2_predict_net, inputs)
+        _, c2_outputs = c2_native_run_net(c2_init_net, c2_predict_net, inputs)
+        del _
 
-        for input_name in c2_predict_net.external_input:
-            if input_name == 'data' or input_name == 'gpu_0/data':
-                break
-        else:
-            raise RuntimeError(
-                'Could not find input name of model {}'.format(net_name))
-        predict_model = c2_onnx.caffe2_net_to_onnx_model(
+        model = c2_onnx.caffe2_net_to_onnx_model(
             predict_net=c2_predict_net,
             init_net=c2_init_net,
-            value_info={
-                input_name: (onnx_pb2.TensorProto.FLOAT,
-                             (1, 3, 224, 224))
-            })
-        c2_ir = c2.prepare(predict_model)
+            value_info=json.load(open(os.path.join(model_dir, 'value_info.json'))))
+        c2_ir = c2.prepare(model)
         onnx_outputs = c2_ir.run(inputs)
         self.assertSameOutputs(c2_outputs, onnx_outputs, decimal=decimal)
         self.report_mem_usage(net_name)
@@ -225,7 +218,7 @@ class TestCaffe2End2End(TestCase):
         model_dir = self._model_dir(model)
         assert not os.path.exists(model_dir)
         os.makedirs(model_dir)
-        for f in ['predict_net.pb', 'predict_net.pbtxt', 'init_net.pb']:
+        for f in ['predict_net.pb', 'init_net.pb', 'value_info.json']:
             url = getURLFromName(model, f)
             dest = os.path.join(model_dir, f)
             try:

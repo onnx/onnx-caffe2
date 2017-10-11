@@ -8,363 +8,474 @@ from __future__ import division
 from __future__ import print_function
 from __future__ import unicode_literals
 
+import itertools
+import collections
 import logging
-import re
 
 import caffe2
-from onnx import onnx_pb2, checker, numpy_helper, mapping
-import onnx.helper
-from onnx_caffe2.helper import make_model, c2_native_run_net
-import onnx.defs
 from enum import Enum
+from onnx import defs, checker, helper, numpy_helper, mapping
+from onnx.onnx_pb2 import *
+from onnx.helper import make_tensor, make_tensor_value_info
 import numpy as np
+
+from onnx_caffe2.helper import make_model, c2_native_run_net, dummy_name
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# caffe2 arguments that needs to be removed
-_blacklist_caffe2_args = {'order', 'global_pooling',
-                          'cudnn_exhaustive_search', 'use_cudnn'}
 
-# expected argument values
-_expected_arg_values = {'order': [b'NCHW'], 'global_pooling': [1]}
+class Caffe2Frontend(object):
+    _renamed_operators = {
+        'SpatialBN': 'BatchNormalization',
+        'Conv1D': 'Conv',
+        'Conv2D': 'Conv',
+        'Conv3D': 'Conv',
+        'ConvTranspose1D': 'ConvTranspose',
+        'ConvTranspose2D': 'ConvTranspose',
+        'ConvTranspose3D': 'ConvTranspose',
+        'MaxPool1D': 'MaxPool',
+        'MaxPool2D': 'MaxPool',
+        'MaxPool3D': 'MaxPool',
+        'AveragePool1D': 'AveragePool',
+        'AveragePool2D': 'AveragePool',
+        'AveragePool3D': 'AveragePool',
+    }
 
-_renamed_args = {
-    'Squeeze': {'dims': 'axes'},
-    'Transpose': {'axes': 'perm'},
-    'Conv': {'kernels': 'kernel_shape'},
-    'ConvTranspose': {'kernels': 'kernel_shape'},
-    'MaxPool': {'kernels': 'kernel_shape'},
-    'AveragePool': {'kernels': 'kernel_shape'},
-    'ChannelShuffle': {'kernels': 'kernel_shape'},
-}
+    # caffe2 arguments that are completely removed in onnx
+    _blacklist_caffe2_args = {
+        'order': {b'NCHW'},
+        'cudnn_exhaustive_search': {0, 1},
+        'use_cudnn': {0, 1},
+    }
 
+    _global_renamed_args = {
+        'kernels': 'kernel_shape',
+    }
 
-class ArgType(Enum):
-    NONE = 0
-    FLOAT = 1
-    INT = 2
-    STR = 3
-    FLOATS = 4
-    INTS = 5
-    STRS = 6
+    _per_op_renamed_args = {
+        'Squeeze': {'dims': 'axes'},
+        'Transpose': {'axes': 'perm'},
+        'PadImage': {'pads': 'paddings'},
+    }
 
+    _special_operators = {
+        'Conv': '_create_conv_pool_op',
+        'ConvTranspose': '_create_conv_pool_op',
+        'ChannelShuffle': '_create_channel_shuffle',
+        'MaxPool': '_create_conv_pool_op',
+        'AveragePool': '_create_conv_pool_op',
+        'Concat': '_create_concat',
+        'FC': '_create_gemm',
+        'LRN': '_create_lrn',
+    }
 
-def get_caffe2_arg_type_and_val(caffe2_arg):
-    if caffe2_arg.HasField('f'):
-        return ArgType.FLOAT, caffe2_arg.f
-    elif caffe2_arg.HasField('i'):
-        return ArgType.INT, caffe2_arg.i
-    elif caffe2_arg.HasField('s'):
-        return ArgType.STR, caffe2_arg.s
-    elif len(caffe2_arg.floats):
-        return ArgType.FLOATS, caffe2_arg.floats
-    elif len(caffe2_arg.ints):
-        return ArgType.INTS, caffe2_arg.ints
-    elif len(caffe2_arg.strings):
-        return ArgType.STRS, caffe2_arg.strings
-    return ArgType.NONE, None
+    @classmethod
+    def _common_caffe2_arg_to_onnx_attr(cls, op_def, arg):
+        attr = AttributeProto()
 
+        # name
+        op_type = op_def.type
+        if op_type in cls._per_op_renamed_args:
+            attr.name = cls._per_op_renamed_args[op_type].get(arg.name, arg,name)
+        else:
+            attr.name = cls._global_renamed_args.get(arg.name, arg.name)
 
-def onnx_attr_assign(onnx_attr, attr_type, attr_val):
-    if attr_type == ArgType.FLOAT:
-        onnx_attr.f = attr_val
-    elif attr_type == ArgType.INT:
-        onnx_attr.i = attr_val
-    elif attr_type == ArgType.STR:
-        onnx_attr.s = attr_val
-    elif attr_type == ArgType.FLOATS:
-        onnx_attr.floats.extend(attr_val)
-    elif attr_type == ArgType.INTS:
-        onnx_attr.ints.extend(attr_val)
-    elif attr_type == ArgType.STRS:
-        onnx_attr.strings.extend(attr_val)
+        # value
+        if arg.HasField('f'):
+            value = attr.f = arg.f
+        elif arg.HasField('i'):
+            value = attr.i = arg.i
+        elif arg.HasField('s'):
+            value = attr.s = arg.s
+        elif arg.floats:
+            value = arg.floats
+            attr.floats.extend(arg.floats)
+        elif arg.ints:
+            value = arg.ints
+            attr.ints.extend(arg.ints)
+        elif arg.strings:
+            value = arg.strings
+            attr.strings.extend(arg.strings)
+        else:
+            raise ValueError('Could not find data field in arg: {}'.format(arg))
 
+        if arg.name in cls._blacklist_caffe2_args:
+            assert value in cls._blacklist_caffe2_args[arg.name]
+            return None
 
-def get_onnx_attrs(op_type, op_def):
-    onnx_attrs = []
-    args = {a.name: get_caffe2_arg_type_and_val(a) for a in op_def.arg}
-    if op_type in ['Conv',
-                   'ConvTranspose',
-                   'MaxPool', 'GlobalMaxPool',
-                   'AveragePool', 'GlobalAveragePool',
-                   'ChannelShuffle']:
-        def apply_trans(args, k, dim=2):
-            onnx_attr = None
+        return attr
+
+    @classmethod
+    def caffe2_arg_to_onnx_attr(cls, op_def, arg):
+        return cls._common_caffe2_arg_to_onnx_attr(op_def, arg)
+
+    @classmethod
+    def _common_caffe2_op_to_onnx_node(cls, op_def, shapes):
+        node_def = NodeProto()
+        node_def.name = op_def.name
+
+        node_def.op_type = cls._renamed_operators.get(op_def.type, op_def.type)
+
+        node_def.input.extend(op_def.input)
+        node_def.output.extend(op_def.output)
+
+        attrs = filter(None, [cls.caffe2_arg_to_onnx_attr(op_def, arg)
+                              for arg in op_def.arg])
+        node_def.attribute.extend(attrs)
+
+        return node_def
+
+    @classmethod
+    def _create_concat(cls, op_def, shapes):
+        node = cls._common_caffe2_op_to_onnx_node(op_def, shapes)
+        if len(node.output) == 2:
+            del node.output[1]
+        return node
+
+    @classmethod
+    def _create_conv_pool_op(cls, op_def, shapes):
+        node = cls._common_caffe2_op_to_onnx_node(op_def, shapes)
+
+        if node.op_type in ['MaxPool', 'AveragePool']:
+            for i, attr in enumerate(node.attribute):
+                if attr.name == 'global_pooling' and attr.i:
+                    node.op_type = 'Global{}'.format(node.op_type)
+                    del node.attribute[i]
+                    break
+
+        attrs = {attr.name: attr for attr in node.attribute}
+        def apply_trans(k, dim=2, ks=None):
+            ks = ks or (k + 's')
             if dim == 2:
-                k_h, k_w, ks = k+'_h', k+'_w', k+'s'
+                k_h, k_w = k+'_h', k+'_w'
             else:
-                k_t, k_l, k_b, k_r, ks = k+'_t', k+'_l', k+'_b', k+'_r', k+'s'
-            if dim == 2 and k_h in args and k_w in args:
-                assert not onnx_attr
-                onnx_attr = onnx_pb2.AttributeProto()
-                onnx_attr.name = ks
-                onnx_attr_assign(onnx_attr, ArgType.INTS, [args[k_h][1], args[k_w][1]])
-                del args[k_h]
-                del args[k_w]
-            if dim == 4 and k_t in args and k_l in args and k_b in args and k_r in args:
-                assert not onnx_attr
-                onnx_attr = onnx_pb2.AttributeProto()
-                onnx_attr.name = ks
-                onnx_attr_assign(onnx_attr, ArgType.INTS, [args[k_t][1], args[k_l][1], args[k_b][1], args[k_r][1]])
-                del args[k_t]
-                del args[k_l]
-                del args[k_b]
-                del args[k_r]
-            if k in args:
-                assert not onnx_attr
-                onnx_attr = onnx_pb2.AttributeProto()
-                onnx_attr.name = ks
-                onnx_attr_assign(onnx_attr, ArgType.INTS, [args[k][1]] * dim)
-                del args[k]
-            if onnx_attr:
-                if op_type in ['GlobalMaxPool', 'GlobalAveragePool']:
-                    # TODO: check the values are equal to the default values in c2
-                    pass
-                else:
-                    onnx_attrs.append(onnx_attr)
+                k_t, k_l, k_b, k_r = k+'_t', k+'_l', k+'_b', k+'_r'
 
-        apply_trans(args, 'kernel')
-        apply_trans(args, 'stride')
-        apply_trans(args, 'dilation')
-        apply_trans(args, 'adj')
-        apply_trans(args, 'pad', 4)
+            vals = None
+            if (dim == 2 and
+                k_h in attrs and k_w in attrs):
+                vals = [attrs[k_h].i, attrs[k_w].i]
+                del attrs[k_h]
+                del attrs[k_w]
+            elif (dim == 4 and
+                  k_t in attrs and k_l in attrs and k_b in attrs and k_r in attrs):
+                vals = [attrs[k_t].i,
+                        attrs[k_l].i,
+                        attrs[k_b].i,
+                        attrs[k_r].i]
+                del attrs[k_t]
+                del attrs[k_l]
+                del attrs[k_b]
+                del attrs[k_r]
+            elif k in attrs:
+                vals = [attrs[k].i] * dim
+                del attrs[k]
 
-    for a in args:
-        t, val = args[a]
-        if a in _expected_arg_values:
-            if val not in _expected_arg_values[a]:
-                raise Exception('value {} not in the expected value list({})'
-                                'for argument {}'.format(val, _expected_arg_values[a], a))
-        if a not in _blacklist_caffe2_args:
-            onnx_attr = onnx_pb2.AttributeProto()
-            onnx_attr.name = a
-            onnx_attr_assign(onnx_attr, t, val)
-            onnx_attrs.append(onnx_attr)
+            if vals and not node.op_type.startswith('Global'):
+                attr = AttributeProto()
+                attr.name = ks
+                attr.ints[:] = vals
+                attrs[attr.name] = attr
 
-    for attr in onnx_attrs:
-        if op_type in _renamed_args and attr.name in _renamed_args[op_type]:
-            attr.name = _renamed_args[op_type][attr.name]
-    return onnx_attrs
+        apply_trans('kernel', ks='kernel_shape')
+        apply_trans('stride')
+        apply_trans('dilation')
+        apply_trans('adj')
+        apply_trans('pad', 4)
 
+        del node.attribute[:]
+        node.attribute.extend(attrs.values())
+        return node
 
-def get_node_op_type(op_def):
-    op_type = op_def.type
+    @classmethod
+    def _create_gemm(cls, op_def, shapes):
+        x, w, b = op_def.input
+        args = {arg.name: arg for arg in op_def.arg}
+        y, = op_def.output
 
-    matched = re.match(r'^(Conv|ConvTranspose)(\dD)?$', op_type)
-    if matched:
-        op_type = matched.group(1)
+        nodes = []
+        if 'axis' in args:
+            axis = args['axis'].i
+            x_shape = shapes[x]
+            outer = np.prod(x_shape[:axis]).astype(int)
+            inner = np.prod(x_shape[axis:]).astype(int)
+            reshaped_x = dummy_name()
+            nodes.append(helper.make_node(
+                'Reshape',
+                inputs=[x],
+                outputs=[reshaped_x],
+                shape=[outer, inner],
+            ))
+            x = reshaped_x
 
-    matched = re.match(r'^(MaxPool|AveragePool)(\dD)?$', op_type)
-    if matched:
-        is_global = False
-        for arg in op_def.arg:
-            if arg.name == 'global_pooling' and arg.i:
-                is_global = True
-                break
-        op_type = ('Global' if is_global else '') + matched.group(1)
+        if 'axis_w' in args:
+            axis_w = args['axis_w'].i
+            w_shape = shapes[w]
+            outer = np.prod(w_shape[:axis_w]).astype(int)
+            inner = np.prod(w_shape[axis_w:]).astype(int)
+            reshaped_w = dummy_name()
+            nodes.append(helper.make_node(
+                'Reshape',
+                inputs=[w],
+                outputs=[reshaped_w],
+                shape=[outer, inner],
+            ))
+            w = reshaped_w
 
-    return op_type
-
-
-def caffe2_op_to_node_def(op_def, env):
-    node_def = onnx_pb2.NodeProto()
-    # NB: This must happen BEFORE we start freshening inplace outputs
-    node_def.input.extend(map(env.rename, op_def.input))
-    node_def.op_type = get_node_op_type(op_def)
-
-    # Determine what was inplace updates
-    input_set = set(op_def.input)
-    output_set = set(op_def.output)
-
-    schema = onnx.defs.get_schema(node_def.op_type)
-    # ints does not support extend()
-    consumes = []
-    for i, x in enumerate(op_def.input):
-        is_consumed, output_idx = schema.consumed(i)
-        if is_consumed == onnx.defs.OpSchema.UseType.CONSUME_ENFORCED:
-            consumes.append(1)
-        elif is_consumed == onnx.defs.OpSchema.UseType.CONSUME_ALLOWED:
-            if x in output_set:
-                consumes.append(1)
-            else:
-                consumes.append(0)
-        else:
-            if x in output_set:
-                raise RuntimeError(
-                    "schema says consume not allowed, but caffe2 used inplace syntax")
-            consumes.append(0)
-    if any(consumes):
-        consumes_attr = onnx_pb2.AttributeProto()
-        consumes_attr.name = "consumed_inputs"
-        consumes_attr.ints.extend(consumes)
-    else:
-        consumes_attr = None
-
-    def fresh_or_rename(out):
-        if out in input_set:
-            return env.fresh(out)
-        else:
-            return env.rename(out)
-
-    node_def.output.extend(map(fresh_or_rename, op_def.output))
-    # TODO: refactor frontend to allow special handling for individual ops
-    if node_def.op_type == 'Concat':
-        assert len(node_def.output) == 2
-        del node_def.output[1]
-
-    node_def.name = op_def.name
-    attrs = get_onnx_attrs(node_def.op_type, op_def)
-    if consumes_attr:
-        attrs.append(consumes_attr)
-    node_def.attribute.extend(attrs)
-    checker.check_node(node_def)
-    return node_def
-
-
-class NameMap(object):
-    """
-    A class for handling renaming of edges from Caffe2 to ONNX.
-    As much as possible, this prefers using the original name,
-    but we may need to allocate fresh names to disambiguate inplace
-    outputs.
-    """
-    def __init__(self):
-        # Invariant: used = rng(env)
-        self.env = {}
-        self.used = set()
-        self.unique = 0
-    def _add(self, k, v):
-        self.env[k] = v
-        self.used.add(v)
-        return v
-    def rename(self, name):
-        if name in self.env:
-            return self.env[name]
-        elif name in self.used:
-            return self.fresh(name)
-        else:
-            return self._add(name, name)
-    def fresh(self, name):
-        def mk():
-            return name + "_fresh" + str(self.unique)
-        while mk() in self.used:
-            self.unique += 1
-        # allowed to override!
-        return self._add(name, mk())
-
-
-def caffe2_init_net_to_initializer(init_net):
-    initializer = []
-    for init_op in init_net.op:
-        assert not init_op.input
-        try:
-            data_type, field_name, np_type, raw = {
-                'GivenTensorFill': (onnx_pb2.TensorProto.FLOAT, 'floats', np.float32, True),
-                'GivenTensorInt64Fill': (onnx_pb2.TensorProto.INT64, 'ints', np.int64, True),
-                'GivenTensorIntFill': (onnx_pb2.TensorProto.INT32, 'ints', np.int32, True),
-                'GivenTensorBoolFill': (onnx_pb2.TensorProto.BOOL, 'ints', np.int32, True),
-                # raw_data can not be used to store strings
-                'GivenTensorStringFill': (onnx_pb2.TensorProto.STRING, 'strings', None, False),
-            }[init_op.type]
-        except KeyError:
-            raise RuntimeError(
-                "Can not translate init_net with operator '{}' "
-                "to initializer".format(init_op.type)
-            )
-        args = {a.name: a for a in init_op.arg}
-        vals = getattr(args['values'], field_name)
-        if raw:
-            assert np_type
-            vals = np.asarray(vals, dtype=np_type).tobytes()
-        initializer.append(onnx.helper.make_tensor(
-            name=init_op.output[0],
-            data_type=data_type,
-            dims=args['shape'].ints,
-            vals=vals,
-            raw=raw,
+        nodes.append(helper.make_node(
+            'Gemm',
+            inputs=[x, w, b],
+            outputs=[y],
+            name=op_def.name,
+            transB=1,
+            broadcast=1,
         ))
-    return initializer
 
+        if 'axis' in args:
+            axis = args['axis'].i
+            x_shape = shapes[x]
+            nodes.append(helper.make_node(
+                'Reshape',
+                inputs=[y],
+                outputs=[y],
+                shape=x_shape[:axis] + [-1],
+            ))
 
-def caffe2_net_to_onnx_model(*args, **kwargs):
-    model_def = make_model(caffe2_net_to_onnx_graph(*args, **kwargs))
-    checker.check_model(model_def)
-    return model_def
+        return nodes
 
+    @classmethod
+    def _create_lrn(cls, op_def, shapes):
+        node = cls._common_caffe2_op_to_onnx_node(op_def, shapes)
+        if len(node.output) == 2:
+            del node.output[1]
+        return node
 
-def caffe2_net_to_onnx_graph(predict_net,
-                             init_net=None,
-                             value_info=None):
-    if value_info is None:
-        value_info = {}
-    if not isinstance(value_info, dict):
-        raise ValueError('Please pass value_info as a '
-                         'name -> (type, shape) dictionary')
-    if init_net:
-        initializer = caffe2_init_net_to_initializer(init_net)
-        value_info.update({init.name: (init.data_type, init.dims)
-                           for init in initializer})
-    else:
-        initializer = []
+    @classmethod
+    def _create_channel_shuffle(cls, op_def, shapes):
+        x, = op_def.input
+        y, = op_def.output
+        n, c, h, w = shapes[x]
+        args = {arg.name: arg for arg in op_def.arg}
+        g = args['group'].i
+        assert c % g == 0
 
-    # Check whether we have got type shape info of all input
-    missing = (set(list(predict_net.external_input)) -
-               set(value_info.keys()))
-    if missing:
-        raise RuntimeError('Could not find value info of inputs: {}'.format(
-            ', '.join(missing)))
+        nodes = []
 
-    # If there are missing type shape info of output,
-    # run the net once to find out!
-    missing = (set(list(predict_net.external_output)) -
-               set(value_info.keys()))
-    if missing:
+        tmp1 = dummy_name()
+        nodes.append(helper.make_node(
+            'Reshape',
+            inputs=[x],
+            outputs=[tmp1],
+            shape=[n, g, c // g, h, w],
+        ))
+
+        tmp2 = dummy_name()
+        nodes.append(helper.make_node(
+            'Transpose',
+            inputs=[tmp1],
+            outputs=[tmp2],
+            perm=[0, 2, 1, 3, 4],
+        ))
+
+        nodes.append(helper.make_node(
+            'Reshape',
+            inputs=[tmp2],
+            outputs=[y],
+            shape=[n, c, h, w],
+        ))
+        return nodes
+
+    @classmethod
+    def caffe2_op_to_onnx_node(cls, op_def, shapes):
+        if op_def.type in cls._special_operators:
+            translator = getattr(cls, cls._special_operators[op_def.type])
+        else:
+            translator = cls._common_caffe2_op_to_onnx_node
+        nodes = translator(op_def, shapes)
+        if not isinstance(nodes, collections.Iterable):
+            nodes = [nodes]
+        return nodes
+
+    @classmethod
+    def caffe2_net_to_onnx_graph(cls,
+                                 predict_net,
+                                 init_net=None,
+                                 value_info=None):
+        if value_info is None:
+            value_info = {}
+        if not isinstance(value_info, dict):
+            raise ValueError('Please pass value_info as a '
+                             'name -> (type, shape) dictionary')
+        if init_net:
+            initializer = cls.caffe2_init_net_to_initializer(init_net)
+            value_info.update({init.name: (init.data_type, init.dims)
+                               for init in initializer})
+        else:
+            initializer = []
+
+        # Check whether we have got type shape info of all input
+        missing = (set(list(predict_net.external_input)) -
+                   set(value_info.keys()))
+        if missing:
+            raise RuntimeError('Could not find value info of inputs: {}'.format(
+                ', '.join(missing)))
+
         inputs = {}
         for name in predict_net.external_input:
             elem_type, shape = value_info[name]
             inputs[name] = np.random.randn(*shape).astype(
                 mapping.TENSOR_TYPE_TO_NP_TYPE[elem_type])
 
-        outputs = c2_native_run_net(
+        ws, outputs = c2_native_run_net(
             init_net,
             predict_net,
             inputs)
 
-        for name in missing:
+        for name in predict_net.external_output:
             output = outputs[name]
             elem_type = mapping.NP_TYPE_TO_TENSOR_TYPE[output.dtype]
             shape = output.shape
             value_info[name] = (elem_type, shape)
 
-    graph_def = onnx_pb2.GraphProto()
-    graph_def.name = predict_net.name
-    graph_def.initializer.extend(initializer)
-    # This is a mapping from Caffe2 names to ONNX names
-    name_map = NameMap()
-    graph_def.input.extend(
-        onnx.helper.make_tensor_value_info(
-            name=name_map.rename(name),
-            elem_type=value_info[name][0],
-            shape=value_info[name][1])
-        for name in predict_net.external_input)
-    graph_def.node.extend(
-        caffe2_op_to_node_def(op, name_map) for op in predict_net.op)
+        graph_def = GraphProto()
+        graph_def.name = predict_net.name
+        graph_def.initializer.extend(initializer)
+        # This is a mapping from Caffe2 names to ONNX names
+        graph_def.input.extend(
+            make_tensor_value_info(
+                name=name,
+                elem_type=value_info[name][0],
+                shape=value_info[name][1])
+            for name in predict_net.external_input)
 
-    all_output = set(sum((list(node.output) for node in graph_def.node),
-                         [init.name for init in graph_def.initializer]))
-    redundant_output = set(vi.name for vi in graph_def.output) - all_output
-    if redundant_output:
-        logger.warning(
-            'There are graph output not produced by any node or initializer: {}'
-            '! Will drop them.'.format(', '.join(redundant_output)))
-    graph_def.output.extend(
-        onnx.helper.make_tensor_value_info(
-            name=name_map.rename(name),
-            elem_type=value_info[name][0],
-            shape=value_info[name][1])
-        for name in predict_net.external_output
-        if name in all_output)
+        for op in predict_net.op:
+            shapes = {}
+            for name in itertools.chain(op.input, op.output):
+                blob = ws.FetchBlob(name)
+                if hasattr(blob, 'shape'):
+                    shapes[name] = blob.shape
+            graph_def.node.extend(
+                cls.caffe2_op_to_onnx_node(
+                    op, shapes=shapes))
 
-    checker.check_graph(graph_def)
-    return graph_def
+        all_output = set(sum((list(node.output) for node in graph_def.node),
+                             [init.name for init in graph_def.initializer]))
+        redundant_output = set(vi.name for vi in graph_def.output) - all_output
+        if redundant_output:
+            logger.warning(
+                'There are graph output not produced by any node or initializer: {}'
+                '! Will drop them.'.format(', '.join(redundant_output)))
+        graph_def.output.extend(
+            make_tensor_value_info(
+                name=name,
+                elem_type=value_info[name][0],
+                shape=value_info[name][1])
+            for name in predict_net.external_output
+            if name in all_output)
+
+        cls._inplace_rewrite(graph_def)
+
+        checker.check_graph(graph_def)
+        return graph_def
+
+    @classmethod
+    def caffe2_init_net_to_initializer(cls, init_net):
+        initializer = []
+        for op in init_net.op:
+            assert not op.input
+            try:
+                data_type, field_name = {
+                    'GivenTensorFill': (TensorProto.FLOAT, 'floats'),
+                    'GivenTensorInt64Fill': (TensorProto.INT64, 'ints'),
+                    'GivenTensorIntFill': (TensorProto.INT32, 'ints'),
+                    'GivenTensorBoolFill': (TensorProto.BOOL, 'ints'),
+                    'GivenTensorStringFill': (TensorProto.STRING, 'strings'),
+                }[op.type]
+            except KeyError:
+                raise RuntimeError(
+                    "Can not translate init_net with operator '{}' "
+                    "to initializer".format(op.type)
+                )
+            raw = (data_type != TensorProto.STRING)
+            args = {a.name: a for a in op.arg}
+            vals = getattr(args['values'], field_name)
+            if raw:
+                vals = np.asarray(
+                    vals,
+                    dtype=mapping.TENSOR_TYPE_TO_NP_TYPE[data_type]).tobytes()
+            initializer.append(make_tensor(
+                name=op.output[0],
+                data_type=data_type,
+                dims=args['shape'].ints,
+                vals=vals,
+                raw=raw,
+            ))
+        return initializer
+
+    @classmethod
+    def _inplace_rewrite(cls, graph_def):
+        renamed = {}
+
+        count = [0]
+        def rename(old_name):
+            count[0] += 1
+            return '{}_{}'.format(old_name, count[0])
+
+        for node in graph_def.node:
+            renamed_update = {}
+            schema = defs.get_schema(node.op_type)
+            consumes = []
+            for i, input_name in enumerate(node.input):
+                consume_type, output_idx = schema.consumed(i)
+                if consume_type == defs.OpSchema.UseType.CONSUME_ENFORCED:
+                    if output_idx < len(node.output):
+                        old_name = node.output[output_idx]
+                        renamed_update[old_name] = rename(old_name)
+                    consumes.append(1)
+                elif input_name in node.output:
+                    if consume_type != defs.OpSchema.UseType.CONSUME_ALLOWED:
+                        raise RuntimeError(
+                            'Inplace consuming input {} is not allowed'.format(
+                                input_name))
+                    consumed_output_idx = list(node.output).index(input_name)
+                    if consumed_output_idx != output_idx:
+                        raise RuntimeError(
+                            'Inplace consuming input {} is not allowed '
+                            'by output idx {}'.format(
+                                ainput_name, consumed_output_idx))
+                    if output_idx < len(node.output):
+                        old_name = node.output[output_idx]
+                        renamed_update[old_name] = rename(old_name)
+                    consumes.append(1)
+                else:
+                    consumes.append(0)
+
+            node.input[:] = [renamed.get(input_name, input_name)
+                             for input_name in node.input]
+
+            renamed.update(renamed_update)
+            node.output[:] = [renamed.get(output_name, output_name)
+                              for output_name in node.output]
+
+            if not any(consumes):
+                continue
+
+            consumes_attr = AttributeProto()
+            consumes_attr.name = "consumed_inputs"
+            consumes_attr.ints.extend(consumes)
+            node.attribute.extend([consumes_attr])
+
+        for value_info in graph_def.output:
+            value_info.name = renamed.get(value_info.name, value_info.name)
+
+    @classmethod
+    def caffe2_net_to_onnx_model(cls, *args, **kwargs):
+        model = make_model(cls.caffe2_net_to_onnx_graph(*args, **kwargs))
+        checker.check_model(model)
+        return model
+
+
+caffe2_net_to_onnx_graph = Caffe2Frontend.caffe2_net_to_onnx_graph
+caffe2_net_to_onnx_model = Caffe2Frontend.caffe2_net_to_onnx_model
+caffe2_init_net_to_initializer = Caffe2Frontend.caffe2_init_net_to_initializer

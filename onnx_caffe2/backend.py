@@ -106,6 +106,7 @@ class Caffe2Backend(Backend):
         'GlobalAveragePool':    'AveragePool',
         'Pad':                  'PadImage',
         'Neg':                  'Negative',
+        'BatchNormalization':   'SpatialBN',
     }
 
     _global_renamed_attrs = {'kernel_shape': 'kernels'}
@@ -232,16 +233,24 @@ class Caffe2Backend(Backend):
             ops.append(core.CreateOperator('Scale', [C], [scaled_C], scale=beta))
             C = scaled_C
 
-        AB = dummy_name()
-        ops.append(core.CreateOperator('MatMul',
-                                       [A, B],
-                                       [AB],
-                                       trans_a=n.attrs.get('transA', 0),
-                                       trans_b=n.attrs.get('transB', 0)))
-        ops.append(core.CreateOperator('Add',
-                                       [AB, C],
-                                       [Y],
-                                       broadcast=n.attrs.get('broadcast', 0)))
+        trans_a = n.attrs.get('transA', 0)
+        trans_b = n.attrs.get('transB', 0)
+        broadcast = n.attrs.get('broadcast', 0)
+        if not trans_a and trans_b and broadcast:
+            ops.append(core.CreateOperator('FC',
+                                           [A, B, C],
+                                           [Y]))
+        else:
+            AB = dummy_name()
+            ops.append(core.CreateOperator('MatMul',
+                                           [A, B],
+                                           [AB],
+                                           trans_a=trans_a,
+                                           trans_b=trans_b))
+            ops.append(core.CreateOperator('Add',
+                                           [AB, C],
+                                           [Y],
+                                           broadcast=broadcast))
 
         return ops
 
