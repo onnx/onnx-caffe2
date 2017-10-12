@@ -474,8 +474,20 @@ class Caffe2Backend(Backend):
         return init_net
 
 
+    @classmethod
+    def supports_device(cls, device_str):
+        device = Device(device_str)
+        if device.type == DeviceType.CPU:
+            return True
+        elif device.type == DeviceType.CUDA:
+            return workspace.has_gpu_support
+        return False
+
+
 prepare = Caffe2Backend.prepare
 
 run_node = Caffe2Backend.run_node
 
 run_model = Caffe2Backend.run_model
+
+supports_device = Caffe2Backend.supports_device
