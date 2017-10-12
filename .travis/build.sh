@@ -49,7 +49,9 @@ onnx_dir="$workdir/onnx"
 git clone "https://github.com/onnx/onnx.git" "$onnx_dir" --recursive
 pip install "$onnx_dir"
 pip install pytest-cov psutil
+# This is for running tests on parallel
+pip install pytest-xdist
 
 # run caffe2 tests
 cd "$onnx_c2_dir"
-pytest -s
+pytest -s -n 2
