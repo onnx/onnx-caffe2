@@ -8,7 +8,6 @@ from __future__ import print_function
 from __future__ import unicode_literals
 
 import collections
-import contextlib
 from future.utils import bytes_to_native_str
 
 import caffe2
@@ -42,6 +41,7 @@ class OnnxAttributes(dict):
         for arg in args:
             d[arg.name] = convertAttributeProto(arg)
         return d
+
     def caffe2(self, kmap=lambda k: k):
         for k, v in self.items():
             yield caffe2.python.utils.MakeArgument(kmap(k), v)
@@ -129,7 +129,15 @@ class Caffe2Backend(Backend):
         'Gemm': '_create_gemm',
         'Pad': '_create_pad',
         'Concat': '_create_concat',
+        'OptimizedRNN': '_create_optimized_rnn',
     }
+
+    @classmethod
+    def supports_device(cls, device):
+        device = Device(device)
+        if device.type == DeviceType.CUDA:
+            return workspace.has_gpu_support
+        return True
 
     @classmethod
     def run_node(cls, node, inputs, device='CPU'):
@@ -259,6 +267,30 @@ class Caffe2Backend(Backend):
         op.output.append(dummy_name())
         return op
 
+    @classmethod
+    def _create_optimized_rnn(cls, n):
+        # TODO: we cheat and rely on the fact that ONNX weight layout matches
+        # CuDNN's. Properly we should extract the weight tensor and invoke
+        # RecurrentParamSet exposed by C2
+
+        # TODO: fix Caffe2 to accept initial_h and initial_c as optional inputs
+        assert len(n.inputs) == 4, 'All inputs need to be specified for now'
+        assert len(n.outputs) == 3, 'All outputs need to be specified for now'
+        (w, x, in_h, in_c) = n.inputs
+        (y, out_h, out_c) = n.outputs
+
+        op = core.CreateOperator(
+            'Recurrent',
+            [x, in_h, in_c, w],
+            [y, out_h, out_c, dummy_name(), dummy_name()],
+            rnn_mode=n.attrs['cell_type'],
+            bidirectional=n.attrs.get('directions', 1) - 1,
+            hidden_size=n.attrs['hidden_size'],
+            num_layers=n.attrs.get('num_layers', 1),
+            input_mode='skip' if n.attrs.get('skip_input_transform', 0)
+            else 'linear')
+        return op
+
     # Note [Caffe2 ConvPoolOpBase]
     # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     # To understand what is going on here, we have to talk a little bit about
@@ -378,6 +410,9 @@ class Caffe2Backend(Backend):
 
         onnx_op_type = onnx_node.op_type
         c2_op.type = cls._renamed_operators.get(onnx_op_type, onnx_op_type)
+        if not core.IsOperator(c2_op.type):
+            raise ValueError(
+                "Don't know how to translate op {}".format(onnx_op_type))
 
         def kmap(k):
             if (onnx_op_type in cls._per_op_renamed_attrs and
