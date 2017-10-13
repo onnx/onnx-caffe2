@@ -11,8 +11,9 @@ from __future__ import unicode_literals
 import itertools
 import collections
 import logging
+import re
 
-import caffe2
+from caffe2.python import core as caffe2_core
 from enum import Enum
 from onnx import defs, checker, helper, numpy_helper, mapping
 from onnx.onnx_pb2 import *
@@ -307,6 +308,9 @@ class Caffe2Frontend(object):
         if not isinstance(value_info, dict):
             raise ValueError('Please pass value_info as a '
                              'name -> (type, shape) dictionary')
+
+        cls._ssa_rewrite(predict_net, init_net, value_info)
+
         if init_net:
             initializer = cls.caffe2_init_net_to_initializer(init_net)
             value_info.update({init.name: (init.data_type, init.dims)
@@ -374,8 +378,7 @@ class Caffe2Frontend(object):
             for name in predict_net.external_output
             if name in all_output)
 
-        cls._inplace_rewrite(graph_def)
-
+        cls._annotate_consumed(graph_def)
         checker.check_graph(graph_def)
         return graph_def
 
@@ -414,60 +417,52 @@ class Caffe2Frontend(object):
         return initializer
 
     @classmethod
-    def _inplace_rewrite(cls, graph_def):
-        renamed = {}
-
-        count = [0]
-        def rename(old_name):
-            count[0] += 1
-            return '{}_{}'.format(old_name, count[0])
-
+    def _annotate_consumed(cls, graph_def):
         for node in graph_def.node:
-            renamed_update = {}
             schema = defs.get_schema(node.op_type)
             consumes = []
             for i, input_name in enumerate(node.input):
                 consume_type, output_idx = schema.consumed(i)
                 if consume_type == defs.OpSchema.UseType.CONSUME_ENFORCED:
-                    if output_idx < len(node.output):
-                        old_name = node.output[output_idx]
-                        renamed_update[old_name] = rename(old_name)
-                    consumes.append(1)
-                elif input_name in node.output:
-                    if consume_type != defs.OpSchema.UseType.CONSUME_ALLOWED:
-                        raise RuntimeError(
-                            'Inplace consuming input {} is not allowed'.format(
-                                input_name))
-                    consumed_output_idx = list(node.output).index(input_name)
-                    if consumed_output_idx != output_idx:
-                        raise RuntimeError(
-                            'Inplace consuming input {} is not allowed '
-                            'by output idx {}'.format(
-                                ainput_name, consumed_output_idx))
-                    if output_idx < len(node.output):
-                        old_name = node.output[output_idx]
-                        renamed_update[old_name] = rename(old_name)
                     consumes.append(1)
                 else:
                     consumes.append(0)
 
-            node.input[:] = [renamed.get(input_name, input_name)
-                             for input_name in node.input]
+            if any(consumes):
+                consumes_attr = AttributeProto()
+                consumes_attr.name = "consumed_inputs"
+                consumes_attr.ints.extend(consumes)
+                node.attribute.extend([consumes_attr])
 
-            renamed.update(renamed_update)
-            node.output[:] = [renamed.get(output_name, output_name)
-                              for output_name in node.output]
+    @classmethod
+    def _ssa_rewrite(cls, net, init_net, value_info):
+        def ssa_name(name, version):
+            return '{}_{}'.format(name, version)
 
-            if not any(consumes):
-                continue
-
-            consumes_attr = AttributeProto()
-            consumes_attr.name = "consumed_inputs"
-            consumes_attr.ints.extend(consumes)
-            node.attribute.extend([consumes_attr])
-
-        for value_info in graph_def.output:
-            value_info.name = renamed.get(value_info.name, value_info.name)
+        if init_net:
+            for op in init_net.op:
+                assert re.match('GivenTensor.*Fill', op.type)
+                assert len(op.output) == 1
+                op.output[0] = ssa_name(op.output[0], 0)
+            assert len(init_net.external_input) == 0
+            init_net.external_output[:] = [ssa_name(name, 0)
+                                           for name in init_net.external_output]
+        if value_info:
+            ssa_value_info = {ssa_name(name, 0): value
+                              for name, value in value_info.items()}
+            value_info.clear()
+            value_info.update(ssa_value_info)
+        net.external_input[:] = [ssa_name(name, 0)
+                                 for name in net.external_input]
+        ssa, blob_versions = caffe2_core.get_ssa(net)
+        assert len(net.op) == len(ssa)
+        for op, (versioned_inputs, versioned_outputs) in zip(net.op, ssa):
+            op.input[:] = [ssa_name(name, version)
+                           for name, version in versioned_inputs]
+            op.output[:] = [ssa_name(name, version)
+                            for name, version in versioned_outputs]
+        net.external_output[:] = [ssa_name(name, blob_versions[name])
+                                  for name in net.external_output]
 
     @classmethod
     def caffe2_net_to_onnx_model(cls, *args, **kwargs):

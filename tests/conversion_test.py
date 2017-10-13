@@ -60,7 +60,7 @@ class TestConversion(TestCase):
         self.assertEqual(len(onnx_model.graph.node), 1)
         self.assertEqual(onnx_model.graph.node[0].op_type, 'Relu')
         self.assertEqual(len(onnx_model.graph.initializer), 1)
-        self.assertEqual(onnx_model.graph.initializer[0].name, 'X')
+        self.assertEqual(onnx_model.graph.initializer[0].name, onnx_model.graph.input[0].name)
 
     def test_caffe2_to_onnx_value_info(self):
         caffe2_net = tempfile.NamedTemporaryFile()
