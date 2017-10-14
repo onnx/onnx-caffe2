@@ -179,10 +179,13 @@ class Caffe2Backend(Backend):
             # Use the onnx.numpy_helper because the data may be raw
             return onnx.numpy_helper.to_array(onnx_tensor).flatten().tolist()
 
-        if onnx_tensor.data_type == TensorProto.FLOAT:
+        if onnx_tensor.data_type in [TensorProto.FLOAT16,
+                                     TensorProto.FLOAT,
+                                     TensorProto.DOUBLE]:
             c2_op.type = 'GivenTensorFill'
             c2_values.floats.extend(tensor2list(onnx_tensor))
-        elif onnx_tensor.data_type == TensorProto.INT64:
+        elif onnx_tensor.data_type in [TensorProto.INT64,
+                                       TensorProto.UINT64]:
             c2_op.type = 'GivenTensorInt64Fill'
             c2_values.ints.extend(tensor2list(onnx_tensor))
         elif onnx_tensor.data_type in [TensorProto.UINT8,
@@ -190,7 +193,7 @@ class Caffe2Backend(Backend):
                                        TensorProto.UINT16,
                                        TensorProto.INT16,
                                        TensorProto.INT32,
-                                       TensorProto.FLOAT16]:
+                                       TensorProto.UINT32]:
             c2_op.type = 'GivenTensorIntFill'
             c2_values.ints.extend(tensor2list(onnx_tensor))
         elif onnx_tensor.data_type == TensorProto.BOOL:
