@@ -180,20 +180,21 @@ class Caffe2Backend(Backend):
             return onnx.numpy_helper.to_array(onnx_tensor).flatten().tolist()
 
         if onnx_tensor.data_type in [TensorProto.FLOAT16,
-                                     TensorProto.FLOAT,
-                                     TensorProto.DOUBLE]:
+                                     TensorProto.FLOAT]:
             c2_op.type = 'GivenTensorFill'
             c2_values.floats.extend(tensor2list(onnx_tensor))
+        elif onnx_tensor.data_type in [TensorProto.DOUBLE]:
+            c2_op.type = 'GivenTensorDoubleFill'
+            c2_values.floats.extend(tensor2list(onnx_tensor))
         elif onnx_tensor.data_type in [TensorProto.INT64,
-                                       TensorProto.UINT64]:
+                                       TensorProto.UINT32]:
             c2_op.type = 'GivenTensorInt64Fill'
             c2_values.ints.extend(tensor2list(onnx_tensor))
         elif onnx_tensor.data_type in [TensorProto.UINT8,
                                        TensorProto.INT8,
                                        TensorProto.UINT16,
                                        TensorProto.INT16,
-                                       TensorProto.INT32,
-                                       TensorProto.UINT32]:
+                                       TensorProto.INT32]:
             c2_op.type = 'GivenTensorIntFill'
             c2_values.ints.extend(tensor2list(onnx_tensor))
         elif onnx_tensor.data_type == TensorProto.BOOL:
