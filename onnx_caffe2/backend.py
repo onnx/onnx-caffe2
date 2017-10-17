@@ -179,8 +179,7 @@ class Caffe2Backend(Backend):
             # Use the onnx.numpy_helper because the data may be raw
             return onnx.numpy_helper.to_array(onnx_tensor).flatten().tolist()
 
-        if onnx_tensor.data_type in [TensorProto.FLOAT16,
-                                     TensorProto.FLOAT]:
+        if onnx_tensor.data_type in [TensorProto.FLOAT]:
             c2_op.type = 'GivenTensorFill'
             c2_values.floats.extend(tensor2list(onnx_tensor))
         elif onnx_tensor.data_type in [TensorProto.DOUBLE]:
