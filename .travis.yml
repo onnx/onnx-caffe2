@@ -21,4 +21,4 @@ env:
   global:
     - PB_VERSION=2.6.1
   matrix:
-    - CAFFE2_VERSION=01827c1
+    - CAFFE2_VERSION=cbe0848
