@@ -95,16 +95,17 @@ class TestConversion(TestCase):
         init_net_output = tempfile.NamedTemporaryFile()
 
         node_def = helper.make_node(
-            "Relu", ["X"], ["Y"])
+            "Mul", ["X", "W"], ["Y"])
         graph_def = helper.make_graph(
             [node_def],
             "test",
-            [helper.make_tensor_value_info("X", onnx_pb2.TensorProto.FLOAT, (2, 2))],
+            [helper.make_tensor_value_info("X", onnx_pb2.TensorProto.FLOAT, (2, 3)),
+             helper.make_tensor_value_info("W", onnx_pb2.TensorProto.FLOAT, (3, 2))],
             [helper.make_tensor_value_info("Y", onnx_pb2.TensorProto.FLOAT, (2, 2))],
-            initializer=[helper.make_tensor("X",
+            initializer=[helper.make_tensor("W",
                                             onnx_pb2.TensorProto.FLOAT,
-                                            [2, 2],
-                                            np.zeros((2, 2)).flatten().astype(float))])
+                                            [3, 2],
+                                            np.zeros((3, 2)).flatten().astype(float))])
         model_def = make_model(graph_def, producer_name='onnx-to-caffe2-test')
         onnx_model.write(model_def.SerializeToString())
         onnx_model.flush()
@@ -119,8 +120,11 @@ class TestConversion(TestCase):
         caffe2_net = caffe2_pb2.NetDef()
         caffe2_net.ParseFromString(output.read())
         self.assertEqual(len(caffe2_net.op), 1)
-        self.assertEqual(caffe2_net.op[0].type, 'Relu')
+        self.assertEqual(caffe2_net.op[0].type, 'Mul')
 
         caffe2_init_net = caffe2_pb2.NetDef()
         caffe2_init_net.ParseFromString(init_net_output.read())
-        self.assertEqual(len(caffe2_init_net.op), 1)
+        self.assertEqual(len(caffe2_init_net.op), 2)
+        self.assertEqual(set(sum([list(init_op.output)
+                                  for init_op in caffe2_init_net.op], [])),
+                         {'W', 'X'})

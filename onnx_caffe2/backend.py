@@ -8,17 +8,19 @@ from __future__ import print_function
 from __future__ import unicode_literals
 
 import collections
-from future.utils import bytes_to_native_str
 
+from future.utils import bytes_to_native_str
 import caffe2
 from caffe2.python import core, workspace
 from caffe2.proto import caffe2_pb2
 import caffe2.python.utils
+import numpy as np
 from onnx import onnx_pb2, checker
 from onnx.onnx_pb2 import GraphProto, TensorProto, AttributeProto
 import onnx.numpy_helper
 import onnx.defs
 from onnx.backend.base import Backend, BackendRep, Device, DeviceType, namedtupledict
+
 from onnx_caffe2.workspace import Workspace
 from onnx_caffe2.backend_rep import Caffe2Rep
 from onnx_caffe2.helper import dummy_name
@@ -359,8 +361,7 @@ class Caffe2Backend(Backend):
         return c2_op
 
     @classmethod
-    def prepare(cls, predict_model, device='CPU',
-                init_model=None, **kwargs):
+    def prepare(cls, model, device='CPU', **kwargs):
         '''
         For Onnx Caffe2Backend, we require that init_graph don't initialize the actual input of the predict_graph,
 
@@ -368,23 +369,18 @@ class Caffe2Backend(Backend):
         initializer of the predict_graph, "img" is not initalized. We don't have a check for this, since
         there is no way we can know which blob is the input of the predict_graph.
         '''
-        super(Caffe2Backend, cls).prepare(predict_model, device, **kwargs)
+        super(Caffe2Backend, cls).prepare(model, device, **kwargs)
 
-        if init_model:
-            checker.check_model(init_model)
-
-        init_net, predict_net = cls.onnx_graph_to_caffe2_net(predict_model.graph)
+        init_net, predict_net = cls.onnx_graph_to_caffe2_net(model.graph)
         predict_net.device_option.CopyFrom(get_device_option(Device(device)))
+
+        initialized = {init.name for init in model.graph.initializer}
+        uninitialized = [x for x in predict_net.external_input
+                         if not x in initialized]
 
         ws = Workspace()
         with ws, core.DeviceScope(predict_net.device_option):
-            if init_model:
-               _, init_net_from_model = cls.onnx_graph_to_caffe2_net(init_model.graph)
-               init_net.op.extend(init_net_from_model.op)
             workspace.RunNetOnce(init_net)
-            uninitialized = [x
-                             for x in predict_net.external_input
-                             if not workspace.HasBlob(x)]
 
         return Caffe2Rep(predict_net, ws, uninitialized)
 
@@ -480,16 +476,18 @@ class Caffe2Backend(Backend):
                 output.name = renamed.get(output.name, output.name)
 
     @classmethod
-    def onnx_graph_to_caffe2_net(cls, graph_def, mobile=False):
+    def onnx_graph_to_caffe2_net(cls, graph_def):
         cls._inplace_rewrite(graph_def)
         if graph_def.initializer:
             init_net = cls.onnx_initializer_to_caffe2_init_net(
-            graph_def.initializer)
+                graph_def.initializer)
+            initialized = {init.name for init in graph_def.initializer}
         else:
             init_net = caffe2_pb2.NetDef()
+            initialized = set()
+
         predict_net = caffe2_pb2.NetDef()
         predict_net.name = graph_def.name
-
         for node in graph_def.node:
             predict_net.op.extend(cls._onnx_node_to_caffe2_op(node))
 
@@ -498,19 +496,27 @@ class Caffe2Backend(Backend):
         predict_net.external_output.extend(
             value_info.name for value_info in graph_def.output)
 
-        if mobile:
-            def InitOpDef(x):
-                op_def = caffe2_pb2.OperatorDef()
-                op_def.output.extend([x])
-                op_def.type = 'GivenTensorFill'
-                arg = op_def.arg.add()
-                arg.name = 'values'
-                arg.floats.extend([1])
-                return op_def
-            # predictors require all referenced blobs to be initialized
-            initialized = [x.output[0] for x in init_net.op]
-            uninitialized = set(predict_net.external_input) - set(initialized)
-            init_net.op.extend([InitOpDef(x) for x in uninitialized])
+        # Caffe2 predictor requires all input blobs (including the
+        # real model inputs) are initialized in init_net
+        for value_info in graph_def.input:
+            if value_info.name in initialized:
+                continue
+            op_def = caffe2_pb2.OperatorDef()
+            op_def.output.extend([value_info.name])
+            op_def.type = 'GivenTensorFill'
+
+            shape = list(d.dim_value for d in value_info.type.tensor_type.shape.dim)
+
+            shape_arg = op_def.arg.add()
+            shape_arg.name = 'shape'
+            shape_arg.ints.extend(shape)
+
+            values_arg = op_def.arg.add()
+            values_arg.name = 'values'
+            values_arg.floats.extend(np.ones(shape).flatten().tolist())
+
+            init_net.op.extend([op_def])
+
         return init_net, predict_net
 
     @classmethod

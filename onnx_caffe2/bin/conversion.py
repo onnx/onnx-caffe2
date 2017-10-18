@@ -77,15 +77,10 @@ def caffe2_to_onnx(caffe2_net,
               required=True,
               type=click.File('wb'),
               help='Output path for the caffe2 init net file')
-@click.option('--mobile',
-              required=False,
-              default=False,
-              type=bool,
-              help='Specify whether the exported caffe2 nets are for mobile')
-def onnx_to_caffe2(onnx_model, output, init_net_output, mobile):
+def onnx_to_caffe2(onnx_model, output, init_net_output):
     onnx_model_proto = onnx_pb2.ModelProto()
     onnx_model_proto.ParseFromString(onnx_model.read())
     graph_def = onnx_model_proto.graph
-    init_net, predict_net = c2.onnx_graph_to_caffe2_net(graph_def, mobile)
+    init_net, predict_net = c2.onnx_graph_to_caffe2_net(graph_def)
     init_net_output.write(init_net.SerializeToString())
     output.write(predict_net.SerializeToString())
