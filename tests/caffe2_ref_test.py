@@ -12,9 +12,9 @@ from caffe2.proto import caffe2_pb2
 
 import onnx
 from onnx.helper import make_node, make_graph, make_tensor, make_tensor_value_info
-from onnx_caffe2.helper import make_model, c2_native_run_net
+from onnx_caffe2.helper import make_model, c2_native_run_net, c2_native_run_op
 
-from onnx import onnx_pb2, defs
+from onnx import onnx_pb2, defs, mapping
 import onnx_caffe2.frontend as c2_onnx
 import onnx_caffe2.backend as c2
 
@@ -172,6 +172,38 @@ class TestCaffe2Basic(TestCase):
             output["Y"],
             alpha * np.dot(A, B) + beta * C)
 
+    def test_tensor_filling_ops(self):
+        for dtype in [
+                onnx.TensorProto.FLOAT,
+                onnx.TensorProto.DOUBLE,
+                onnx.TensorProto.BOOL,
+                onnx.TensorProto.INT8,
+                onnx.TensorProto.INT16,
+                onnx.TensorProto.INT32,
+                onnx.TensorProto.INT64,
+                onnx.TensorProto.UINT8,
+                onnx.TensorProto.UINT16,
+                onnx.TensorProto.UINT32,
+        ]:
+            shape = (1, 2, 3)
+            vals = np.random.randn(*shape)
+            if dtype != onnx.TensorProto.BOOL:
+                vals *= 5
+            vals = vals.astype(
+                mapping.TENSOR_TYPE_TO_NP_TYPE[dtype])
+            tensor = make_tensor(
+                name='test-tensor-{}'.format(dtype),
+                data_type=dtype,
+                dims=[1, 2, 3],
+                vals=vals.flatten().tolist(),
+            )
+            op = c2.Caffe2Backend._create_tensor_filling_op(tensor)
+            self.assertEqual(len(op.input), 0)
+            self.assertEqual(op.output, [tensor.name])
+            ws, output = c2_native_run_op(op, inputs=[])
+            self.assertEqual(len(output), 1)
+            np.testing.assert_almost_equal(output[0], vals)
+            np.testing.assert_almost_equal(ws.FetchBlob(op.output[0]), vals)
 
 class TestCaffe2End2End(TestCase):
     def _model_dir(self, model):
