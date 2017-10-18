@@ -1,7 +1,6 @@
 onnx-caffe2
 ========
 [![Build Status](https://travis-ci.org/onnx/onnx-caffe2.svg?branch=master)](https://travis-ci.org/onnx/onnx-caffe2)
-[![Build Status](https://build.pytorch.org/buildStatus/icon?job=onnx-builds/onnx-caffe2)](https://build.pytorch.org/job/onnx-builds/job/onnx-caffe2/)
 
 Caffe2 implementation of Open Neural Network Exchange (ONNX).
 
