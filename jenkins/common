@@ -1,0 +1,17 @@
+set -ex
+
+die() {
+    echo >&2 "$@"
+    exit 1
+}
+
+[[ -n "$WORKDIR" ]] || die "WORKDIR not set"
+export workdir="$WORKDIR"
+[[ -e $workdir ]] || die "WORKDIR does not exist"
+
+[[ -n "$PYTHON_VERSION" ]] || die "PYTHON_VERSION not set"
+build_cache_dir="$workdir/build_cache/$PYTHON_VERSION"
+mkdir -p "$build_cache_dir"
+
+# setup ccache
+export PATH="/usr/lib/ccache:$PATH"
