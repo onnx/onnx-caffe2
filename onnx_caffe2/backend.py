@@ -133,6 +133,7 @@ class Caffe2Backend(Backend):
         'Pad': '_create_pad',
         'Concat': '_create_concat',
         'OptimizedRNN': '_create_optimized_rnn',
+        'Slice': '_create_slice',
     }
 
     @classmethod
@@ -304,6 +305,72 @@ class Caffe2Backend(Backend):
             input_mode='skip' if n.attrs.get('skip_input_transform', 0)
             else 'linear')
         return op
+
+    @classmethod
+    def _create_slice(cls, n):
+        op = cls._common_onnx_node_to_caffe2_op(n)
+        data, axes, orig_starts, orig_ends = op.input
+        ops = []
+
+        data_shape = dummy_name()
+        ops.append(core.CreateOperator(
+            'Shape',
+            [data],
+            [data_shape]
+        ))
+
+        tmp_starts = dummy_name()
+        starts = dummy_name()
+        ops.extend([
+            core.CreateOperator(
+                'ConstantFill',
+                [data_shape],
+                [tmp_starts],
+                dtype=caffe2_pb2.TensorProto.INT64,
+                value=0,
+            ),
+            core.CreateOperator(
+                'ScatterAssign',
+                [tmp_starts, axes, orig_starts],
+                [tmp_starts],
+            ),
+            # Slice only accepts starts as int
+            core.CreateOperator(
+                'Cast',
+                [tmp_starts],
+                [starts],
+                to=caffe2_pb2.TensorProto.INT32,
+            ),
+        ])
+
+        tmp_ends = dummy_name()
+        ends = dummy_name()
+        ops.extend([
+            core.CreateOperator(
+                'ConstantFill',
+                [data_shape],
+                [tmp_ends],
+                dtype=caffe2_pb2.TensorProto.INT64,
+                value=-1,
+            ),
+            core.CreateOperator(
+                'ScatterAssign',
+                [tmp_ends, axes, orig_ends],
+                [tmp_ends],
+            ),
+            # Slice only accepts ends as int
+            core.CreateOperator(
+                'Cast',
+                [tmp_ends],
+                [ends],
+                to=caffe2_pb2.TensorProto.INT32,
+            ),
+        ])
+
+        op.input[:] = [data, starts, ends]
+        ops.append(op)
+
+        return ops
 
     # Note [Caffe2 ConvPoolOpBase]
     # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~

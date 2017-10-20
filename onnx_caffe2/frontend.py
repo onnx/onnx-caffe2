@@ -69,6 +69,7 @@ class Caffe2Frontend(object):
         'Concat': '_create_concat',
         'FC': '_create_gemm',
         'LRN': '_create_lrn',
+        'Slice': '_create_slice',
     }
 
     @classmethod
@@ -251,6 +252,68 @@ class Caffe2Frontend(object):
         if len(node.output) == 2:
             del node.output[1]
         return node
+
+    @classmethod
+    def _create_slice(cls, op_def, shapes):
+        node = cls._common_caffe2_op_to_onnx_node(op_def, shapes)
+        attrs = {attr.name: attr for attr in node.attribute}
+
+        nodes = []
+
+        data = node.input[0]
+        n_dims = len(shapes[data])
+        if 'starts' in attrs:
+            assert 'ends' in attrs
+            assert len(node.input) == 1
+            starts = dummy_name()
+            ends = dummy_name()
+
+            axes = dummy_name()
+            nodes.append(helper.make_node(
+                'Constant',
+                inputs=[],
+                outputs=[starts],
+                value=helper.make_tensor(
+                    name=axes,
+                    data_type=TensorProto.INT64,
+                    dims=(n_dims,),
+                    vals=attrs.pop('starts').ints,
+                )
+            ))
+            nodes.append(helper.make_node(
+                'Constant',
+                inputs=[],
+                outputs=[ends],
+                value=helper.make_tensor(
+                    name=axes,
+                    data_type=TensorProto.INT64,
+                    dims=(n_dims,),
+                    vals=attrs.pop('ends').ints,
+                )
+            ))
+        else:
+            assert len(node.input) == 3
+            starts, ends = node.input[1:]
+
+        axes = dummy_name()
+        nodes.append(helper.make_node(
+            'Constant',
+            inputs=[],
+            outputs=[axes],
+            value=helper.make_tensor(
+                name=axes,
+                data_type=TensorProto.INT32,
+                dims=(n_dims,),
+                vals=list(range(n_dims)),
+            )
+        ))
+        node.input[:] = [data, axes, starts, ends]
+
+        del node.attribute[:]
+        node.attribute.extend(attrs.values())
+        nodes.append(node)
+
+        return nodes
 
     @classmethod
     def _create_channel_shuffle(cls, op_def, shapes):

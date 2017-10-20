@@ -8,6 +8,7 @@ import os
 import sys
 import unittest
 
+from caffe2.python import core
 from caffe2.proto import caffe2_pb2
 
 import onnx
@@ -204,6 +205,38 @@ class TestCaffe2Basic(TestCase):
             self.assertEqual(len(output), 1)
             np.testing.assert_almost_equal(output[0], vals)
             np.testing.assert_almost_equal(ws.FetchBlob(op.output[0]), vals)
+
+    def test_slice(self):
+        X = np.random.randn(1, 2, 3).astype(np.float32)
+        starts = np.array([0, 1, 0], dtype=np.int32)
+        ends = np.array([-1, 2, 3], dtype=np.int32)
+
+        predict_net = caffe2_pb2.NetDef()
+        predict_net.name = 'test-slice-net'
+        predict_net.external_input[:] = ['X']
+        predict_net.external_output[:] = ['Y']
+        predict_net.op.extend([
+            core.CreateOperator(
+                'Slice',
+                inputs=['X'],
+                outputs=['Y'],
+                starts=starts,
+                ends=ends,
+            ),
+        ])
+        ws, (Y,) = c2_native_run_net(
+            init_net=None,
+            predict_net=predict_net,
+            inputs=[X])
+
+        onnx_model = c2_onnx.caffe2_net_to_onnx_model(
+            predict_net=predict_net,
+            value_info={
+                'X': (onnx.mapping.NP_TYPE_TO_TENSOR_TYPE[X.dtype], X.shape)
+            })
+        Y, = c2.run_model(onnx_model, inputs=X)
+        np.testing.assert_almost_equal(Y, X[:,1:2,:])
+
 
 class TestCaffe2End2End(TestCase):
     def _model_dir(self, model):
