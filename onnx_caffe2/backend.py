@@ -326,6 +326,7 @@ class Caffe2Backend(Backend):
                 'ConstantFill',
                 [data_shape],
                 [tmp_starts],
+                dtype=caffe2_pb2.TensorProto.INT64,
                 value=0,
             ),
             core.CreateOperator(
@@ -333,6 +334,7 @@ class Caffe2Backend(Backend):
                 [tmp_starts, axes, orig_starts],
                 [tmp_starts],
             ),
+            # Slice only accepts starts as int
             core.CreateOperator(
                 'Cast',
                 [tmp_starts],
@@ -348,6 +350,7 @@ class Caffe2Backend(Backend):
                 'ConstantFill',
                 [data_shape],
                 [tmp_ends],
+                dtype=caffe2_pb2.TensorProto.INT64,
                 value=-1,
             ),
             core.CreateOperator(
@@ -355,6 +358,7 @@ class Caffe2Backend(Backend):
                 [tmp_ends, axes, orig_ends],
                 [tmp_ends],
             ),
+            # Slice only accepts ends as int
             core.CreateOperator(
                 'Cast',
                 [tmp_ends],
