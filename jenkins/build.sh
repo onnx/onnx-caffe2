@@ -12,7 +12,7 @@ if [[ $PYTHON_VERSION == 2.* ]]; then
     rm -rf venv2 && virtualenv venv2
     source venv2/bin/activate
 elif [[ $PYTHON_VERSION == 3.* ]]; then
-    rm -rf venv3 && python3 -m venv venv3
+    rm -rf venv3 && "python$PYTHON_VERSION" -m venv venv3
     source venv3/bin/activate
 else
     die "Unknown Python version: $PYTHON_VERSION"
