@@ -309,65 +309,107 @@ class Caffe2Backend(Backend):
     @classmethod
     def _create_slice(cls, n):
         op = cls._common_onnx_node_to_caffe2_op(n)
-        data, axes, orig_starts, orig_ends = op.input
+        args = {arg.name: arg for arg in op.arg}
+        starts_vals = np.array(
+            args.pop('starts').ints, dtype=np.int64).tolist()
+        ends_vals = np.array(
+            [i - 1 if i < 0 else i for i in args.pop('ends').ints],
+            dtype=np.int64).tolist()
+        if 'axes' in args:
+            axes_vals = np.array(
+                args.pop('axes').ints, dtype=np.int32).tolist()
+        else:
+            ndims = len(starts_vals)
+            axes_vals = np.array(range(ndims), dtype=np.int32).tolist()
+
+        data, = op.input
         ops = []
 
-        data_shape = dummy_name()
+        shape_tensor = dummy_name()
         ops.append(core.CreateOperator(
             'Shape',
             [data],
-            [data_shape]
+            [shape_tensor]
         ))
 
-        tmp_starts = dummy_name()
-        starts = dummy_name()
+        axes_tensor = dummy_name()
         ops.extend([
             core.CreateOperator(
+                'GivenTensorIntFill',
+                [],
+                [axes_tensor],
+                shape=[len(axes_vals)],
+                values=axes_vals,
+            ),
+        ])
+
+        starts_vals_tensor = dummy_name()
+        starts_tensor = dummy_name()
+        casted_starts_tensor = dummy_name()
+        ops.extend([
+            core.CreateOperator(
+                'GivenTensorInt64Fill',
+                [],
+                [starts_vals_tensor],
+                shape=[len(starts_vals)],
+                values=starts_vals,
+            ),
+            core.CreateOperator(
                 'ConstantFill',
-                [data_shape],
-                [tmp_starts],
+                [shape_tensor],
+                [starts_tensor],
                 dtype=caffe2_pb2.TensorProto.INT64,
                 value=0,
             ),
             core.CreateOperator(
                 'ScatterAssign',
-                [tmp_starts, axes, orig_starts],
-                [tmp_starts],
+                [starts_tensor, axes_tensor, starts_vals_tensor],
+                [starts_tensor],
             ),
             # Slice only accepts starts as int
             core.CreateOperator(
                 'Cast',
-                [tmp_starts],
-                [starts],
+                [starts_tensor],
+                [casted_starts_tensor],
                 to=caffe2_pb2.TensorProto.INT32,
             ),
         ])
 
-        tmp_ends = dummy_name()
-        ends = dummy_name()
+        ends_vals_tensor = dummy_name()
+        ends_tensor = dummy_name()
+        casted_ends_tensor = dummy_name()
         ops.extend([
             core.CreateOperator(
+                'GivenTensorInt64Fill',
+                [],
+                [ends_vals_tensor],
+                shape=[len(ends_vals)],
+                values=ends_vals,
+            ),
+            core.CreateOperator(
                 'ConstantFill',
-                [data_shape],
-                [tmp_ends],
+                [shape_tensor],
+                [ends_tensor],
                 dtype=caffe2_pb2.TensorProto.INT64,
                 value=-1,
             ),
             core.CreateOperator(
                 'ScatterAssign',
-                [tmp_ends, axes, orig_ends],
-                [tmp_ends],
+                [ends_tensor, axes_tensor, ends_vals_tensor],
+                [ends_tensor],
             ),
             # Slice only accepts ends as int
             core.CreateOperator(
                 'Cast',
-                [tmp_ends],
-                [ends],
+                [ends_tensor],
+                [casted_ends_tensor],
                 to=caffe2_pb2.TensorProto.INT32,
             ),
         ])
 
-        op.input[:] = [data, starts, ends]
+        op.input[:] = [data, casted_starts_tensor, casted_ends_tensor]
+        del op.arg[:]
+        op.arg.extend(args.values())
         ops.append(op)
 
         return ops

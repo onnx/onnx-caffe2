@@ -234,7 +234,7 @@ class TestCaffe2Basic(TestCase):
             value_info={
                 'X': (onnx.mapping.NP_TYPE_TO_TENSOR_TYPE[X.dtype], X.shape)
             })
-        Y, = c2.run_model(onnx_model, inputs=X)
+        Y, = c2.run_model(onnx_model, inputs=[X])
         np.testing.assert_almost_equal(Y, X[:,1:2,:])
 
 
