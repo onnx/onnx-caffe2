@@ -11,10 +11,26 @@ from onnx.backend.base import namedtupledict
 from onnx_caffe2.workspace import Workspace
 
 
-def dummy_name(seed=[0]):
-    res = 'OC2_DUMMY_{}'.format(seed[0])
-    seed[0] += 1
-    return res
+class _DummyNameFactory(object):
+    used_names = set()
+    counter = 0
+
+    @classmethod
+    def dummy_name(cls, used_names=None):
+        if used_names is not None:
+            cls.used_names.clear()
+            cls.used_names.update(used_names)
+            cls.counter = 0
+            return None
+        else:
+            while True:
+                name = 'OC2_DUMMY_{}'.format(cls.counter)
+                cls.counter += 1
+                if name not in cls.used_names:
+                    cls.used_names.add(name)
+                    return name
+
+dummy_name = _DummyNameFactory.dummy_name
 
 
 def make_model(graph, **kwargs):

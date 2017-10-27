@@ -7,14 +7,16 @@ import tempfile
 import textwrap
 
 from caffe2.proto import caffe2_pb2
-from caffe2.python import brew
+from caffe2.python import brew, core
 from caffe2.python.model_helper import ModelHelper
 from click.testing import CliRunner
 import numpy as np
 from onnx import onnx_pb2, helper
-from onnx_caffe2.helper import make_model
+from onnx_caffe2.helper import make_model, c2_native_run_net
 
 from onnx_caffe2.bin.conversion import caffe2_to_onnx, onnx_to_caffe2
+from onnx_caffe2.helper import dummy_name
+import onnx_caffe2.backend as c2
 from test_utils import TestCase
 
 
@@ -128,3 +130,91 @@ class TestConversion(TestCase):
         self.assertEqual(set(sum([list(init_op.output)
                                   for init_op in caffe2_init_net.op], [])),
                          {'W', 'X'})
+
+    def test_convert_end2end(self):
+        predict_net_f = tempfile.NamedTemporaryFile()
+        init_net_f = tempfile.NamedTemporaryFile()
+        onnx_model_f = tempfile.NamedTemporaryFile()
+
+        x = 'X'
+        w = 'W'
+        b = 'b'
+        y = 'Y'
+
+        predict_net = caffe2_pb2.NetDef()
+        predict_net.name = 'test-convert-end2end'
+        predict_net.external_input[:] = [x, w, b]
+        predict_net.external_output[:] = [y]
+        predict_net.op.extend([
+            core.CreateOperator(
+                'FC',
+                inputs=[x, w, b],
+                outputs=[y],
+                axis=2,
+            ),
+        ])
+        predict_net_f.write(predict_net.SerializeToString())
+        predict_net_f.flush()
+
+        init_net = caffe2_pb2.NetDef()
+        init_net.name = 'test-convert-end2end-init'
+        init_net.external_output[:] = [w, b]
+        x_val = np.random.randn(1, 3, 2).astype(np.float32)
+        w_val = np.random.randn(4, 2).astype(np.float32)
+        b_val = np.random.randn(4).astype(np.float32)
+        init_net.op.extend([
+            core.CreateOperator(
+                'GivenTensorFill',
+                [],
+                [w],
+                values=w_val,
+                shape=w_val.shape,
+            ),
+            core.CreateOperator(
+                'GivenTensorFill',
+                [],
+                [b],
+                values=b_val,
+                shape=b_val.shape,
+            ),
+        ])
+        init_net_f.write(init_net.SerializeToString())
+        init_net_f.flush()
+
+        y_val = np.matmul(x_val, w_val.transpose()) + b_val
+        for _ in range(5):
+            self._run_command(
+                caffe2_to_onnx, [
+                    predict_net_f.name,
+                    '--caffe2-init-net', init_net_f.name,
+                    '--output', onnx_model_f.name,
+                    '--value-info',
+                    json.dumps({
+                        x: (onnx_pb2.TensorProto.FLOAT, (1, 3, 2)),
+                    }),
+                ])
+            onnx_model_f.seek(0)
+            onnx_model = onnx_pb2.ModelProto()
+            onnx_model.ParseFromString(onnx_model_f.read())
+            np.testing.assert_almost_equal(
+                c2.run_model(
+                    onnx_model, {onnx_model.graph.input[0].name: x_val}),
+                [y_val])
+
+            self._run_command(
+                onnx_to_caffe2, [
+                    onnx_model_f.name,
+                    '--output', predict_net_f.name,
+                    '--init-net-output', init_net_f.name,
+                ])
+            predict_net_f.seek(0)
+            predict_net = caffe2_pb2.NetDef()
+            predict_net.ParseFromString(predict_net_f.read())
+            init_net_f.seek(0)
+            init_net = caffe2_pb2.NetDef()
+            init_net.ParseFromString(init_net_f.read())
+            x = predict_net.external_input[0]
+            np.testing.assert_almost_equal(c2_native_run_net(init_net=init_net,
+                                                             predict_net=predict_net,
+                                                             inputs={x: x_val})[1],
+                                           [y_val])

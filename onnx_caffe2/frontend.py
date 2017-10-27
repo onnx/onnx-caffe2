@@ -71,6 +71,7 @@ class Caffe2Frontend(object):
         'FC': '_create_gemm',
         'LRN': '_create_lrn',
         'Slice': '_create_slice',
+        'Reshape': '_create_reshape',
     }
 
     @classmethod
@@ -137,6 +138,13 @@ class Caffe2Frontend(object):
         return node
 
     @classmethod
+    def _create_reshape(cls, op_def, shapes):
+        node = cls._common_caffe2_op_to_onnx_node(op_def, shapes)
+        if len(node.output) == 2:
+            del node.output[1]
+        return node
+
+    @classmethod
     def _create_conv_pool_op(cls, op_def, shapes):
         node = cls._common_caffe2_op_to_onnx_node(op_def, shapes)
 
@@ -196,11 +204,11 @@ class Caffe2Frontend(object):
         x, w, b = op_def.input
         args = {arg.name: arg for arg in op_def.arg}
         y, = op_def.output
+        x_shape = list(shapes[x])
 
         nodes = []
         if 'axis' in args:
             axis = args['axis'].i
-            x_shape = shapes[x]
             outer = np.prod(x_shape[:axis]).astype(int)
             inner = np.prod(x_shape[axis:]).astype(int)
             reshaped_x = dummy_name()
@@ -237,7 +245,6 @@ class Caffe2Frontend(object):
 
         if 'axis' in args:
             axis = args['axis'].i
-            x_shape = shapes[x]
             nodes.append(helper.make_node(
                 'Reshape',
                 inputs=[y],
@@ -328,6 +335,19 @@ class Caffe2Frontend(object):
             nodes = [nodes]
         return nodes
 
+    @staticmethod
+    def _all_names_in_net(net):
+        if net is None:
+            return set()
+
+        names = set()
+        names.update(net.external_input)
+        names.update(net.external_output)
+        for op in net.op:
+            names.update(op.input)
+            names.update(op.output)
+        return names
+
     @classmethod
     def caffe2_net_to_onnx_graph(cls,
                                  predict_net,
@@ -382,6 +402,9 @@ class Caffe2Frontend(object):
                 elem_type=value_info[name][0],
                 shape=value_info[name][1])
             for name in predict_net.external_input)
+
+        dummy_name(cls._all_names_in_net(predict_net) |
+                   cls._all_names_in_net(init_net))
 
         for op in predict_net.op:
             shapes = {}
