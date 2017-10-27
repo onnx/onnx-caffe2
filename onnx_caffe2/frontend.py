@@ -21,6 +21,7 @@ from onnx.helper import make_tensor, make_tensor_value_info
 import numpy as np
 
 from onnx_caffe2.helper import make_model, c2_native_run_net, dummy_name
+from onnx_caffe2.error import Unsupported
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -255,65 +256,31 @@ class Caffe2Frontend(object):
 
     @classmethod
     def _create_slice(cls, op_def, shapes):
+        if len(op_def.input) > 1:
+            raise Unsupported(
+                'ONNX Slice operator does not support dynamic slice.')
         node = cls._common_caffe2_op_to_onnx_node(op_def, shapes)
         attrs = {attr.name: attr for attr in node.attribute}
+        ndims = len(attrs['starts'].ints)
 
-        nodes = []
+        axes = node.attribute.add()
+        axes.name = 'axes'
+        axes.ints.extend(range(ndims))
 
-        data = node.input[0]
-        n_dims = len(shapes[data])
-        if 'starts' in attrs:
-            assert 'ends' in attrs
-            assert len(node.input) == 1
-            starts = dummy_name()
-            ends = dummy_name()
+        data, = node.input
+        shape = shapes[data]
 
-            axes = dummy_name()
-            nodes.append(helper.make_node(
-                'Constant',
-                inputs=[],
-                outputs=[starts],
-                value=helper.make_tensor(
-                    name=axes,
-                    data_type=TensorProto.INT64,
-                    dims=(n_dims,),
-                    vals=attrs.pop('starts').ints,
-                )
-            ))
-            nodes.append(helper.make_node(
-                'Constant',
-                inputs=[],
-                outputs=[ends],
-                value=helper.make_tensor(
-                    name=axes,
-                    data_type=TensorProto.INT64,
-                    dims=(n_dims,),
-                    vals=attrs.pop('ends').ints,
-                )
-            ))
-        else:
-            assert len(node.input) == 3
-            starts, ends = node.input[1:]
+        ends = attrs['ends'].ints
+        for i, end in enumerate(ends):
+            if end >= 0:
+                continue
+            if end == -1:
+                end = shape[i]
+            else:
+                end = end + 1
+            ends[i] = end
 
-        axes = dummy_name()
-        nodes.append(helper.make_node(
-            'Constant',
-            inputs=[],
-            outputs=[axes],
-            value=helper.make_tensor(
-                name=axes,
-                data_type=TensorProto.INT32,
-                dims=(n_dims,),
-                vals=list(range(n_dims)),
-            )
-        ))
-        node.input[:] = [data, axes, starts, ends]
-
-        del node.attribute[:]
-        node.attribute.extend(attrs.values())
-        nodes.append(node)
-
-        return nodes
+        return node
 
     @classmethod
     def _create_channel_shuffle(cls, op_def, shapes):
