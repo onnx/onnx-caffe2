@@ -584,6 +584,19 @@ class Caffe2Backend(Backend):
             for output in graph_or_nodes.output:
                 output.name = renamed.get(output.name, output.name)
 
+    @staticmethod
+    def _all_names_in_graph(graph):
+        if graph is None:
+            return set()
+
+        names = set()
+        names.update(value_info.name for value_info in graph.input)
+        names.update(value_info.name for value_info in graph.output)
+        for node in graph.node:
+            names.update(node.input)
+            names.update(node.output)
+        return names
+
     @classmethod
     def onnx_graph_to_caffe2_net(cls, graph_def):
         cls._inplace_rewrite(graph_def)
@@ -594,6 +607,8 @@ class Caffe2Backend(Backend):
         else:
             init_net = caffe2_pb2.NetDef()
             initialized = set()
+
+        dummy_name(cls._all_names_in_graph(graph_def) | initialized)
 
         predict_net = caffe2_pb2.NetDef()
         predict_net.name = graph_def.name
