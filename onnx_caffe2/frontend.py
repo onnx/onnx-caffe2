@@ -80,7 +80,7 @@ class Caffe2Frontend(object):
         op_type = op_def.type
         if op_type in cls._per_op_renamed_args:
             name = cls._per_op_renamed_args[op_type].get(
-                arg.name, arg,name)
+                arg.name, arg.name)
         else:
             name = cls._global_renamed_args.get(arg.name, arg.name)
 
@@ -155,13 +155,12 @@ class Caffe2Frontend(object):
         def apply_trans(k, dim=2, ks=None):
             ks = ks or (k + 's')
             if dim == 2:
-                k_h, k_w = k+'_h', k+'_w'
+                k_h, k_w = k + '_h', k + '_w'
             else:
-                k_t, k_l, k_b, k_r = k+'_t', k+'_l', k+'_b', k+'_r'
+                k_t, k_l, k_b, k_r = k + '_t', k + '_l', k + '_b', k + '_r'
 
             vals = None
-            if (dim == 2 and
-                k_h in attrs and k_w in attrs):
+            if (dim == 2 and k_h in attrs and k_w in attrs):
                 vals = [attrs[k_h].i, attrs[k_w].i]
                 del attrs[k_h]
                 del attrs[k_w]
@@ -216,8 +215,8 @@ class Caffe2Frontend(object):
         if 'axis_w' in args:
             axis_w = args['axis_w'].i
             w_shape = shapes[w]
-            outer = np.prod(w_shape[:axis_w]).astype(int)
-            inner = np.prod(w_shape[axis_w:]).astype(int)
+            outer = np.prod(w_shape[:axis_w]).astype(int).item()
+            inner = np.prod(w_shape[axis_w:]).astype(int).item()
             reshaped_w = dummy_name()
             nodes.append(helper.make_node(
                 'Reshape',
@@ -465,7 +464,7 @@ class Caffe2Frontend(object):
         for node in graph_def.node:
             schema = defs.get_schema(node.op_type)
             consumes = []
-            for i, input_name in enumerate(node.input):
+            for i, _input_name in enumerate(node.input):
                 consume_type, output_idx = schema.consumed(i)
                 if consume_type == defs.OpSchema.UseType.CONSUME_ENFORCED:
                     consumes.append(1)

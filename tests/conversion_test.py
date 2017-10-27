@@ -17,7 +17,7 @@ from onnx_caffe2.helper import make_model, c2_native_run_net
 from onnx_caffe2.bin.conversion import caffe2_to_onnx, onnx_to_caffe2
 from onnx_caffe2.helper import dummy_name
 import onnx_caffe2.backend as c2
-from test_utils import TestCase
+from tests.test_utils import TestCase
 
 
 class TestConversion(TestCase):
@@ -192,7 +192,9 @@ class TestConversion(TestCase):
                     json.dumps({
                         x: (TensorProto.FLOAT, (1, 3, 2)),
                     }),
-                ])
+                ],
+                catch_exceptions=False,
+            )
             onnx_model_f.seek(0)
             onnx_model = ModelProto()
             onnx_model.ParseFromString(onnx_model_f.read())

@@ -9,7 +9,6 @@ from __future__ import unicode_literals
 
 import collections
 
-from future.utils import bytes_to_native_str
 import caffe2
 from caffe2.python import core, workspace
 from caffe2.proto import caffe2_pb2
@@ -18,7 +17,7 @@ import numpy as np
 from onnx import checker, GraphProto, TensorProto, AttributeProto
 import onnx.numpy_helper
 import onnx.defs
-from onnx.backend.base import Backend, BackendRep, Device, DeviceType, namedtupledict
+from onnx.backend.base import Backend, Device, DeviceType, namedtupledict
 
 from onnx_caffe2.workspace import Workspace
 from onnx_caffe2.backend_rep import Caffe2Rep
@@ -136,13 +135,6 @@ class Caffe2Backend(Backend):
     }
 
     @classmethod
-    def supports_device(cls, device):
-        device = Device(device)
-        if device.type == DeviceType.CUDA:
-            return workspace.has_gpu_support
-        return True
-
-    @classmethod
     def run_node(cls, node, inputs, device='CPU'):
         super(Caffe2Backend, cls).run_node(node, inputs, device)
 
@@ -203,7 +195,7 @@ class Caffe2Backend(Backend):
             c2_values.ints.extend(tensor2list(onnx_tensor))
         elif onnx_tensor.data_type == TensorProto.STRING:
             c2_op.type = 'GivenTensorStringFill'
-            c2_values.strings.extend(tensor.string_data)
+            c2_values.strings.extend(onnx_tensor.string_data)
         else:
             raise RuntimeError(
                 "unrecognized tensor type {}".format(onnx_tensor.data_type))
@@ -484,7 +476,7 @@ class Caffe2Backend(Backend):
 
         initialized = {init.name for init in model.graph.initializer}
         uninitialized = [x for x in predict_net.external_input
-                         if not x in initialized]
+                         if x not in initialized]
 
         ws = Workspace()
         with ws, core.DeviceScope(predict_net.device_option):
@@ -532,7 +524,7 @@ class Caffe2Backend(Backend):
 
         def kmap(k):
             if (onnx_op_type in cls._per_op_renamed_attrs and
-                k in cls._per_op_renamed_attrs[onnx_op_type]):
+                    k in cls._per_op_renamed_attrs[onnx_op_type]):
                 return cls._per_op_renamed_attrs[onnx_op_type][k]
             if k in cls._global_renamed_attrs:
                 return cls._global_renamed_attrs[k]
@@ -666,4 +658,4 @@ run_node = Caffe2Backend.run_node
 
 run_model = Caffe2Backend.run_model
 
-supports_device = Caffe2Backend.supports_device
+supports_device = Caffe2Backend.supports_device  # noqa

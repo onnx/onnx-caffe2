@@ -3,6 +3,7 @@ from __future__ import division
 from __future__ import print_function
 from __future__ import unicode_literals
 
+import onnx
 import numpy as np
 from caffe2.proto import caffe2_pb2
 from caffe2.python import core
@@ -10,7 +11,7 @@ from onnx import helper, TensorProto
 
 import onnx_caffe2.frontend as c2_onnx
 from onnx_caffe2.helper import c2_native_run_net
-from test_utils import TestCase
+from tests.test_utils import TestCase
 
 
 class TestFrontendSSAConversion(TestCase):
