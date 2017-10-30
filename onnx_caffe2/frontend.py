@@ -76,45 +76,34 @@ class Caffe2Frontend(object):
 
     @classmethod
     def _common_caffe2_arg_to_onnx_attr(cls, op_def, arg):
-        attr = AttributeProto()
-
         # name
         op_type = op_def.type
         if op_type in cls._per_op_renamed_args:
-            attr.name = cls._per_op_renamed_args[op_type].get(arg.name, arg,name)
+            name = cls._per_op_renamed_args[op_type].get(
+                arg.name, arg,name)
         else:
-            attr.name = cls._global_renamed_args.get(arg.name, arg.name)
+            name = cls._global_renamed_args.get(arg.name, arg.name)
 
-        # value
-        if arg.HasField('f'):
-            value = attr.f = arg.f
-            attr.type = AttributeProto.FLOAT
-        elif arg.HasField('i'):
-            value = attr.i = arg.i
-            attr.type = AttributeProto.INT
-        elif arg.HasField('s'):
-            value = attr.s = arg.s
-            attr.type = AttributeProto.STRING
-        elif arg.floats:
-            value = arg.floats
-            attr.floats.extend(arg.floats)
-            attr.type = AttributeProto.FLOATS
-        elif arg.ints:
-            value = arg.ints
-            attr.ints.extend(arg.ints)
-            attr.type = AttributeProto.INTS
-        elif arg.strings:
-            value = arg.strings
-            attr.strings.extend(arg.strings)
-            attr.type = AttributeProto.STRINGS
-        else:
-            raise ValueError('Could not find data field in arg: {}'.format(arg))
-
-        if arg.name in cls._blacklist_caffe2_args:
+        if name in cls._blacklist_caffe2_args:
             assert value in cls._blacklist_caffe2_args[arg.name]
             return None
 
-        return attr
+        # value
+        if arg.HasField('f'):
+            value = arg.f
+        elif arg.HasField('i'):
+            value = arg.i
+        elif arg.HasField('s'):
+            value = arg.s
+        elif arg.floats:
+            value = arg.floats
+        elif arg.ints:
+            value = arg.ints
+        elif arg.strings:
+            value = arg.strings
+        else:
+            raise ValueError('Could not find data field in arg: {}'.format(arg))
+        return helper.make_attribute(name, value)
 
     @classmethod
     def caffe2_arg_to_onnx_attr(cls, op_def, arg):
@@ -190,11 +179,7 @@ class Caffe2Frontend(object):
                 del attrs[k]
 
             if vals and not node.op_type.startswith('Global'):
-                attr = AttributeProto()
-                attr.type = AttributeProto.INTS
-                attr.name = ks
-                attr.ints[:] = vals
-                attrs[attr.name] = attr
+                attrs[ks] = helper.make_attribute(ks, vals)
 
         apply_trans('kernel', ks='kernel_shape')
         apply_trans('stride')
@@ -277,10 +262,7 @@ class Caffe2Frontend(object):
         attrs = {attr.name: attr for attr in node.attribute}
         ndims = len(attrs['starts'].ints)
 
-        axes = node.attribute.add()
-        axes.name = 'axes'
-        axes.type = AttributeProto.INTS
-        axes.ints.extend(range(ndims))
+        node.attribute.extend([helper.make_attribute('axes', range(ndims))])
 
         data, = node.input
         shape = shapes[data]
@@ -490,11 +472,10 @@ class Caffe2Frontend(object):
                     consumes.append(0)
 
             if any(consumes):
-                consumes_attr = AttributeProto()
-                consumes_attr.name = "consumed_inputs"
-                consumes_attr.type = AttributeProto.INTS
-                consumes_attr.ints.extend(consumes)
-                node.attribute.extend([consumes_attr])
+                node.attribute.extend([helper.make_attribute(
+                    'consumed_inputs',
+                    consumes,
+                )])
 
     @classmethod
     def _ssa_rewrite(cls, net, init_net, value_info):
