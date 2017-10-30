@@ -15,8 +15,8 @@ import re
 
 from caffe2.python import core as caffe2_core
 from enum import Enum
-from onnx import defs, checker, helper, numpy_helper, mapping
-from onnx.onnx_pb2 import *
+from onnx import (defs, checker, helper, numpy_helper, mapping,
+                  ModelProto, GraphProto, NodeProto, AttributeProto, TensorProto)
 from onnx.helper import make_tensor, make_tensor_value_info
 import numpy as np
 
@@ -88,19 +88,25 @@ class Caffe2Frontend(object):
         # value
         if arg.HasField('f'):
             value = attr.f = arg.f
+            attr.type = AttributeProto.FLOAT
         elif arg.HasField('i'):
             value = attr.i = arg.i
+            attr.type = AttributeProto.INT
         elif arg.HasField('s'):
             value = attr.s = arg.s
+            attr.type = AttributeProto.STRING
         elif arg.floats:
             value = arg.floats
             attr.floats.extend(arg.floats)
+            attr.type = AttributeProto.FLOATS
         elif arg.ints:
             value = arg.ints
             attr.ints.extend(arg.ints)
+            attr.type = AttributeProto.INTS
         elif arg.strings:
             value = arg.strings
             attr.strings.extend(arg.strings)
+            attr.type = AttributeProto.STRINGS
         else:
             raise ValueError('Could not find data field in arg: {}'.format(arg))
 
@@ -185,6 +191,7 @@ class Caffe2Frontend(object):
 
             if vals and not node.op_type.startswith('Global'):
                 attr = AttributeProto()
+                attr.type = AttributeProto.INTS
                 attr.name = ks
                 attr.ints[:] = vals
                 attrs[attr.name] = attr
@@ -272,6 +279,7 @@ class Caffe2Frontend(object):
 
         axes = node.attribute.add()
         axes.name = 'axes'
+        axes.type = AttributeProto.INTS
         axes.ints.extend(range(ndims))
 
         data, = node.input
@@ -484,6 +492,7 @@ class Caffe2Frontend(object):
             if any(consumes):
                 consumes_attr = AttributeProto()
                 consumes_attr.name = "consumed_inputs"
+                consumes_attr.type = AttributeProto.INTS
                 consumes_attr.ints.extend(consumes)
                 node.attribute.extend([consumes_attr])
 

@@ -7,7 +7,7 @@ import json
 from caffe2.proto import caffe2_pb2
 import click
 import numpy as np
-from onnx import checker, onnx_pb2
+from onnx import checker, ModelProto
 
 from onnx_caffe2.backend import Caffe2Backend as c2
 import onnx_caffe2.frontend as c2_onnx
@@ -78,7 +78,7 @@ def caffe2_to_onnx(caffe2_net,
               type=click.File('wb'),
               help='Output path for the caffe2 init net file')
 def onnx_to_caffe2(onnx_model, output, init_net_output):
-    onnx_model_proto = onnx_pb2.ModelProto()
+    onnx_model_proto = ModelProto()
     onnx_model_proto.ParseFromString(onnx_model.read())
     graph_def = onnx_model_proto.graph
     init_net, predict_net = c2.onnx_graph_to_caffe2_net(graph_def)

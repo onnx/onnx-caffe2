@@ -11,7 +11,7 @@ from caffe2.python import brew, core
 from caffe2.python.model_helper import ModelHelper
 from click.testing import CliRunner
 import numpy as np
-from onnx import onnx_pb2, helper
+from onnx import helper, ModelProto, TensorProto
 from onnx_caffe2.helper import make_model, c2_native_run_net
 
 from onnx_caffe2.bin.conversion import caffe2_to_onnx, onnx_to_caffe2
@@ -57,7 +57,7 @@ class TestConversion(TestCase):
                 '--output', output.name,
             ])
 
-        onnx_model = onnx_pb2.ModelProto()
+        onnx_model = ModelProto()
         onnx_model.ParseFromString(output.read())
         self.assertEqual(len(onnx_model.graph.node), 1)
         self.assertEqual(onnx_model.graph.node[0].op_type, 'Relu')
@@ -81,11 +81,11 @@ class TestConversion(TestCase):
         args.extend([
             '--value-info',
             json.dumps({
-                'X': (onnx_pb2.TensorProto.FLOAT, (2, 2)),
+                'X': (TensorProto.FLOAT, (2, 2)),
             })])
         result = self._run_command(caffe2_to_onnx, args)
 
-        onnx_model = onnx_pb2.ModelProto()
+        onnx_model = ModelProto()
         onnx_model.ParseFromString(output.read())
         self.assertEqual(len(onnx_model.graph.node), 1)
         self.assertEqual(onnx_model.graph.node[0].op_type, 'Relu')
@@ -101,11 +101,11 @@ class TestConversion(TestCase):
         graph_def = helper.make_graph(
             [node_def],
             "test",
-            [helper.make_tensor_value_info("X", onnx_pb2.TensorProto.FLOAT, (2, 3)),
-             helper.make_tensor_value_info("W", onnx_pb2.TensorProto.FLOAT, (3, 2))],
-            [helper.make_tensor_value_info("Y", onnx_pb2.TensorProto.FLOAT, (2, 2))],
+            [helper.make_tensor_value_info("X", TensorProto.FLOAT, (2, 3)),
+             helper.make_tensor_value_info("W", TensorProto.FLOAT, (3, 2))],
+            [helper.make_tensor_value_info("Y", TensorProto.FLOAT, (2, 2))],
             initializer=[helper.make_tensor("W",
-                                            onnx_pb2.TensorProto.FLOAT,
+                                            TensorProto.FLOAT,
                                             [3, 2],
                                             np.zeros((3, 2)).flatten().astype(float))])
         model_def = make_model(graph_def, producer_name='onnx-to-caffe2-test')
@@ -190,11 +190,11 @@ class TestConversion(TestCase):
                     '--output', onnx_model_f.name,
                     '--value-info',
                     json.dumps({
-                        x: (onnx_pb2.TensorProto.FLOAT, (1, 3, 2)),
+                        x: (TensorProto.FLOAT, (1, 3, 2)),
                     }),
                 ])
             onnx_model_f.seek(0)
-            onnx_model = onnx_pb2.ModelProto()
+            onnx_model = ModelProto()
             onnx_model.ParseFromString(onnx_model_f.read())
             np.testing.assert_almost_equal(
                 c2.run_model(

@@ -15,7 +15,7 @@ import onnx
 from onnx.helper import make_node, make_graph, make_tensor, make_tensor_value_info
 from onnx_caffe2.helper import make_model, c2_native_run_net, c2_native_run_op
 
-from onnx import onnx_pb2, defs, mapping
+from onnx import defs, mapping
 import onnx_caffe2.frontend as c2_onnx
 import onnx_caffe2.backend as c2
 
@@ -92,7 +92,7 @@ class TestCaffe2Basic(TestCase):
                 make_tensor_value_info("W", onnx.TensorProto.FLOAT, (2, 2))
             ],
             initializer=[make_tensor("weight",
-                                     onnx_pb2.TensorProto.FLOAT,
+                                     onnx.TensorProto.FLOAT,
                                      [2, 2],
                                      weight.flatten().astype(float))]
         )

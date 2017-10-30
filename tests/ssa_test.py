@@ -6,7 +6,7 @@ from __future__ import unicode_literals
 import numpy as np
 from caffe2.proto import caffe2_pb2
 from caffe2.python import core
-from onnx import onnx_pb2, helper
+from onnx import helper, TensorProto
 
 import onnx_caffe2.frontend as c2_onnx
 from onnx_caffe2.helper import c2_native_run_net
@@ -71,7 +71,7 @@ class TestFrontendSSAConversion(TestCase):
             init_net=init_net,
             inputs=[X])
 
-        value_info = {'X': (onnx_pb2.TensorProto.FLOAT, X.shape)}
+        value_info = {'X': (TensorProto.FLOAT, X.shape)}
         c2_onnx.Caffe2Frontend._ssa_rewrite(
             net,
             init_net,
@@ -92,7 +92,7 @@ class TestFrontendSSAConversion(TestCase):
         self.assertEqual(init_net.op[2].input, [])
         self.assertEqual(init_net.op[2].output, ['s_0'])
         self.assertEqual(init_net.external_output, ['W_0', 'b_0', 's_0'])
-        self.assertEqual(value_info, {'X_0': (onnx_pb2.TensorProto.FLOAT, X.shape)})
+        self.assertEqual(value_info, {'X_0': (TensorProto.FLOAT, X.shape)})
 
         _, ssa_output = c2_native_run_net(
             predict_net=net,
