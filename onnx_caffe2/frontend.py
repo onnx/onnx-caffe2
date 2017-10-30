@@ -84,10 +84,6 @@ class Caffe2Frontend(object):
         else:
             name = cls._global_renamed_args.get(arg.name, arg.name)
 
-        if name in cls._blacklist_caffe2_args:
-            assert value in cls._blacklist_caffe2_args[arg.name]
-            return None
-
         # value
         if arg.HasField('f'):
             value = arg.f
@@ -103,6 +99,11 @@ class Caffe2Frontend(object):
             value = arg.strings
         else:
             raise ValueError('Could not find data field in arg: {}'.format(arg))
+
+        if name in cls._blacklist_caffe2_args:
+            assert value in cls._blacklist_caffe2_args[arg.name]
+            return None
+
         return helper.make_attribute(name, value)
 
     @classmethod
