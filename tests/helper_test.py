@@ -7,7 +7,7 @@ import unittest
 
 from onnx_caffe2.helper import dummy_name
 
-from test_utils import TestCase
+from tests.test_utils import TestCase
 
 
 class TestCaffe2Basic(TestCase):

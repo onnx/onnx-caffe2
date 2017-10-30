@@ -5,7 +5,6 @@ from __future__ import unicode_literals
 
 import json
 import os
-import sys
 import unittest
 
 from caffe2.python import core
@@ -20,11 +19,10 @@ import onnx_caffe2.frontend as c2_onnx
 import onnx_caffe2.backend as c2
 
 import numpy as np
-import google.protobuf.text_format
 from caffe2.python.models.download import downloadFromURLToFile, getURLFromName, deleteDirectory
 
-from onnx_caffe2.helper import make_model, dummy_name
-from test_utils import TestCase
+from onnx_caffe2.helper import dummy_name
+from tests.test_utils import TestCase
 
 
 class TestCaffe2Basic(TestCase):
@@ -235,13 +233,13 @@ class TestCaffe2Basic(TestCase):
                 'X': (onnx.mapping.NP_TYPE_TO_TENSOR_TYPE[X.dtype], X.shape)
             })
         Y, = c2.run_model(onnx_model, inputs=[X])
-        np.testing.assert_almost_equal(Y, X[:,1:2,:])
+        np.testing.assert_almost_equal(Y, X[:, 1:2, :])
 
 
 class TestCaffe2End2End(TestCase):
     def _model_dir(self, model):
-        caffe2_home = os.path.expanduser(os.getenv('CAFFE2_HOME', '~/.caffe2'))
-        models_dir = os.getenv('CAFFE2_MODELS', os.path.join(caffe2_home, 'models'))
+        caffe2_home = os.path.expanduser(os.getenv('ONNX_HOME', '~/.caffe2'))
+        models_dir = os.getenv('ONNX_MODELS', os.path.join(caffe2_home, 'models'))
         return os.path.join(models_dir, model)
 
     def _test_net(self,
