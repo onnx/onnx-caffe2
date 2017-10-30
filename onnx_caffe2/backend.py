@@ -15,8 +15,7 @@ from caffe2.python import core, workspace
 from caffe2.proto import caffe2_pb2
 import caffe2.python.utils
 import numpy as np
-from onnx import onnx_pb2, checker
-from onnx.onnx_pb2 import GraphProto, TensorProto, AttributeProto
+from onnx import checker, GraphProto, TensorProto, AttributeProto
 import onnx.numpy_helper
 import onnx.defs
 from onnx.backend.base import Backend, BackendRep, Device, DeviceType, namedtupledict
