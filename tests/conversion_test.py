@@ -55,7 +55,9 @@ class TestConversion(TestCase):
                 caffe2_net.name,
                 '--caffe2-init-net', caffe2_init_net.name,
                 '--output', output.name,
-            ])
+            ],
+            catch_exceptions=False,
+        )
 
         onnx_model = ModelProto()
         onnx_model.ParseFromString(output.read())
