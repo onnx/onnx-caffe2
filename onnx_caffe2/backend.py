@@ -107,6 +107,7 @@ class Caffe2Backend(Backend):
         'Pad':                  'PadImage',
         'Neg':                  'Negative',
         'BatchNormalization':   'SpatialBN',
+        'MatMul':               'BatchMatMul',
     }
 
     _global_renamed_attrs = {'kernel_shape': 'kernels'}
