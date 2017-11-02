@@ -462,6 +462,19 @@ class Caffe2Backend(Backend):
         return c2_op
 
     @classmethod
+    def _direct_initialize_parameters(cls, initializer, ws, device_option):
+        for tp in initializer:
+            ws.FeedBlob(tp.name, onnx.numpy_helper.to_array(tp), device_option)
+
+    @classmethod
+    def _direct_initialize_inputs(cls, inputs, initialized, ws, device_option):
+        for value_info in inputs:
+            if value_info.name in initialized:
+                continue
+            shape = list(d.dim_value for d in value_info.type.tensor_type.shape.dim)
+            ws.FeedBlob(value_info.name, np.ones(shape), device_option)
+
+    @classmethod
     def prepare(cls, model, device='CPU', **kwargs):
         '''
         For Onnx Caffe2Backend, we require that init_graph don't initialize the actual input of the predict_graph,
@@ -472,20 +485,46 @@ class Caffe2Backend(Backend):
         '''
         super(Caffe2Backend, cls).prepare(model, device, **kwargs)
 
-        init_net, predict_net = cls.onnx_graph_to_caffe2_net(model.graph)
+        ws = Workspace()
         device_option = get_device_option(Device(device))
-        init_net.device_option.CopyFrom(device_option)
-        predict_net.device_option.CopyFrom(device_option)
 
+        # Directly load initializer data into blobs in workspace
+        cls._direct_initialize_parameters(
+            model.graph.initializer,
+            ws,
+            device_option,
+        )
+        # Need to pull this out before we delete model.graph.initializer
         initialized = {init.name for init in model.graph.initializer}
+        initializer = model.graph.initializer[:]
+        # Delete the initializers so they aren't serialized
+        del model.graph.initializer[:]
+
+        cls._direct_initialize_inputs(
+            model.graph.input,
+            initialized,
+            ws,
+            device_option,
+        )
+        # Pull this out to manually add external inputs
+        external_inputs = model.graph.input[:]
+        del model.graph.input[:]
+
+        _, predict_net = cls.onnx_graph_to_caffe2_net(model.graph)
+        predict_net.device_option.CopyFrom(device_option)
+        predict_net.external_input.extend(
+                value_info.name for value_info in external_inputs)
+        predict_net.device_option.CopyFrom(get_device_option(Device(device)))
+
+        # Restore these so as not to mutate input
+        model.graph.initializer.extend(initializer)
+        model.graph.input.extend(external_inputs)
+
         uninitialized = [x for x in predict_net.external_input
                          if x not in initialized]
 
-        ws = Workspace()
-        with ws, core.DeviceScope(predict_net.device_option):
-            workspace.RunNetOnce(init_net)
-
-        return Caffe2Rep(predict_net, ws, uninitialized)
+        retval = Caffe2Rep(predict_net, ws, uninitialized)
+        return retval
 
     @classmethod
     # TODO: This method needs a refactor for clarity
