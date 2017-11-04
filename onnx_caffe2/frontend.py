@@ -16,7 +16,7 @@ import re
 from caffe2.python import core as caffe2_core
 from enum import Enum
 from onnx import (defs, checker, helper, numpy_helper, mapping,
-                  ModelProto, GraphProto, NodeProto, AttributeProto, TensorProto)
+                  ModelProto, GraphProto, NodeProto, AttributeProto, TensorProto, OperatorSetIdProto)
 from onnx.helper import make_tensor, make_tensor_value_info
 import numpy as np
 
@@ -28,6 +28,12 @@ logger = logging.getLogger(__name__)
 
 
 class Caffe2Frontend(object):
+    # This number controls the semantics of the operators we target.  Whenever
+    # ONNX makes a BC breaking change to semantics of operators, having this set
+    # to an accurate number will prevent our models form exporting.  However,
+    # we should strive to keep this up-to-date as much as possible.
+    _target_opset_version = 2
+
     _renamed_operators = {
         'SpatialBN': 'BatchNormalization',
         'Conv1D': 'Conv',
@@ -509,6 +515,10 @@ class Caffe2Frontend(object):
     @classmethod
     def caffe2_net_to_onnx_model(cls, *args, **kwargs):
         model = make_model(cls.caffe2_net_to_onnx_graph(*args, **kwargs))
+        opset_id = OperatorSetIdProto()
+        opset_id.domain = ''  # ONNX
+        opset_id.version = cls._target_opset_version
+        model.opset_import.extend([opset_id])
         checker.check_model(model)
         return model
 
