@@ -52,7 +52,7 @@ pip install -e $onnx_c2_dir
 # install onnx
 onnx_dir="$deps_dir/onnx"
 rm -rf $onnx_dir && git clone "https://github.com/onnx/onnx.git" "$onnx_dir" --recursive
-pip install "$onnx_dir"
+pip install -e "$onnx_dir"
 pip install pytest-cov psutil
 
 # run caffe2 tests
