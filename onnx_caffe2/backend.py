@@ -151,7 +151,8 @@ class Caffe2Backend(Backend):
             cls._inplace_rewrite([node])
             ops = cls._onnx_node_to_caffe2_op(node)
             for op in ops:
-                workspace.RunOperatorOnce(op)
+                op.device_option.CopyFrom(device_option)
+            workspace.RunOperatorsOnce(ops)
             output_values = [workspace.FetchBlob(name) for name in node.output]
             return namedtupledict('Outputs', node.output)(*output_values)
 
@@ -472,7 +473,9 @@ class Caffe2Backend(Backend):
         super(Caffe2Backend, cls).prepare(model, device, **kwargs)
 
         init_net, predict_net = cls.onnx_graph_to_caffe2_net(model.graph)
-        predict_net.device_option.CopyFrom(get_device_option(Device(device)))
+        device_option = get_device_option(Device(device))
+        init_net.device_option.CopyFrom(device_option)
+        predict_net.device_option.CopyFrom(device_option)
 
         initialized = {init.name for init in model.graph.initializer}
         uninitialized = [x for x in predict_net.external_input
