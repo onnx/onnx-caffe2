@@ -114,7 +114,6 @@ class Caffe2Backend(Backend):
     _per_op_renamed_attrs = {
         'Squeeze':              {'axes': 'dims'},
         'Transpose':            {'perm': 'axes'},
-        'Pad':                  {'paddings': 'pads'},
     }
 
     # operators whose behavior is different beyond renaming
@@ -255,13 +254,13 @@ class Caffe2Backend(Backend):
 
     @classmethod
     def _create_pad(cls, n):
-        paddings = n.attrs['paddings']
-        if not (len(paddings) == 8 and
+        pads = n.attrs['pads']
+        if not (len(pads) == 8 and
                 # first two dim is for batch and channel
-                set(paddings[:4]) == {0}):
+                set(pads[:4]) == {0}):
             raise ValueError('Caffe2 only supports padding 2D Tensor')
-        t, l, b, r = paddings[4:]
-        paddings[:] = [t, b, l, r]
+        t, l, b, r = pads[4:]
+        pads[:] = [t, b, l, r]
 
         return cls._common_onnx_node_to_caffe2_op(n)
 
