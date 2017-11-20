@@ -58,7 +58,6 @@ class Caffe2Frontend(object):
     _per_op_renamed_args = {
         'Squeeze': {'dims': 'axes'},
         'Transpose': {'axes': 'perm'},
-        'PadImage': {'pads': 'paddings'},
     }
 
     _special_operators = {
