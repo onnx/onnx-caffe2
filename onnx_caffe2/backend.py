@@ -7,13 +7,16 @@ from __future__ import division
 from __future__ import print_function
 from __future__ import unicode_literals
 
+import os
 import collections
+from subprocess import Popen, PIPE
 
 import caffe2
 from caffe2.python import core, workspace
 from caffe2.proto import caffe2_pb2
 import caffe2.python.utils
 import numpy as np
+import onnx
 from onnx import checker, GraphProto, TensorProto, AttributeProto
 import onnx.numpy_helper
 import onnx.defs
@@ -516,6 +519,20 @@ class Caffe2Backend(Backend):
             shape = list(d.dim_value for d in value_info.type.tensor_type.shape.dim)
             ws.FeedBlob(value_info.name, np.ones(shape), device_option)
 
+    @staticmethod
+    def optimize_onnx(input):
+        # this is where the binary is located when onnx-caffe2 has been installed
+        executable = os.path.join(os.path.realpath(os.path.dirname(__file__)),
+                                  '..', '..', '..', '..', 'bin', 'optimize-onnx')
+        # if it's not there, we are likely in development mode and can
+        # just look for it in PATH
+        if not os.path.isfile(executable):
+            executable = 'optimize-onnx'
+        proc = Popen([executable], stdin=PIPE, stdout=PIPE, stderr=PIPE)
+        stdout, stderr = proc.communicate(input)
+        assert proc.returncode == 0
+        return stdout
+
     @classmethod
     def prepare(cls, model, device='CPU', **kwargs):
         '''
@@ -551,11 +568,8 @@ class Caffe2Backend(Backend):
             ws,
             device_option,
         )
-        # Need to pull this out before we delete model.graph.initializer
+
         initialized = {init.name for init in model.graph.initializer}
-        initializer = model.graph.initializer[:]
-        # Delete the initializers so they aren't serialized
-        del model.graph.initializer[:]
 
         cls._direct_initialize_inputs(
             model.graph.input,
@@ -563,17 +577,8 @@ class Caffe2Backend(Backend):
             ws,
             device_option,
         )
-        # Pull this out to manually add external inputs
-        external_inputs = model.graph.input[:]
-        del model.graph.input[:]
 
-        _, predict_net = cls.onnx_graph_to_caffe2_net(model.graph, device=device, opset_version=opset_version)
-        predict_net.external_input.extend(
-                value_info.name for value_info in external_inputs)
-
-        # Restore these so as not to mutate input
-        model.graph.initializer.extend(initializer)
-        model.graph.input.extend(external_inputs)
+        _, predict_net = cls._onnx_model_to_caffe2_net(model, device, opset_version, False)
 
         uninitialized = [x for x in predict_net.external_input
                          if x not in initialized]
@@ -690,10 +695,15 @@ class Caffe2Backend(Backend):
         return names
 
     @classmethod
-    def onnx_graph_to_caffe2_net(cls, graph_def, device="CPU", opset_version=_known_opset_version):
+    def _onnx_model_to_caffe2_net(cls, model, device, opset_version, include_inputs_and_initializers):
         device_option = get_device_option(Device(device))
+
+        model.ParseFromString(cls.optimize_onnx(model.SerializeToString()))
+
+        graph_def = model.graph
+
         cls._inplace_rewrite(graph_def)
-        if graph_def.initializer:
+        if include_inputs_and_initializers:
             init_net = cls.onnx_initializer_to_caffe2_init_net(
                 graph_def.initializer)
             initialized = {init.name for init in graph_def.initializer}
@@ -715,33 +725,39 @@ class Caffe2Backend(Backend):
 
         # Caffe2 predictor requires all input blobs (including the
         # real model inputs) are initialized in init_net
-        for value_info in graph_def.input:
-            if value_info.name in initialized:
-                continue
-            op_def = caffe2_pb2.OperatorDef()
-            op_def.output.extend([value_info.name])
-            op_def.type = 'GivenTensorFill'
+        if include_inputs_and_initializers:
+            for value_info in graph_def.input:
+                if value_info.name in initialized:
+                    continue
+                op_def = caffe2_pb2.OperatorDef()
+                op_def.output.extend([value_info.name])
+                op_def.type = 'GivenTensorFill'
 
-            shape = list(d.dim_value for d in value_info.type.tensor_type.shape.dim)
-            # TODO: Putting this in the init net will make it run faster, but it
-            # causes some tests to fail...
-            # shape = (1,)
+                shape = list(d.dim_value for d in value_info.type.tensor_type.shape.dim)
+                # TODO: Putting this in the init net will make it run faster, but it
+                # causes some tests to fail...
+                # shape = (1,)
 
-            shape_arg = op_def.arg.add()
-            shape_arg.name = 'shape'
-            shape_arg.ints.extend(shape)
+                shape_arg = op_def.arg.add()
+                shape_arg.name = 'shape'
+                shape_arg.ints.extend(shape)
 
-            values_arg = op_def.arg.add()
-            values_arg.name = 'values'
-            values_arg.floats.extend(np.ones(shape).flatten().tolist())
+                values_arg = op_def.arg.add()
+                values_arg.name = 'values'
+                values_arg.floats.extend(np.ones(shape).flatten().tolist())
 
-            init_net.op.extend([op_def])
+                init_net.op.extend([op_def])
 
         # Set the device option for the init_net and predict_net.
         init_net.device_option.CopyFrom(device_option)
         predict_net.device_option.CopyFrom(device_option)
 
         return init_net, predict_net
+
+    # wrapper for backwards compatability
+    @classmethod
+    def onnx_graph_to_caffe2_net(cls, model, device="CPU", opset_version=_known_opset_version):
+        return cls._onnx_model_to_caffe2_net(model, device=device, opset_version=opset_version, include_inputs_and_initializers=True)
 
     @classmethod
     def onnx_initializer_to_caffe2_init_net(cls, initializer, init_net_name='init'):

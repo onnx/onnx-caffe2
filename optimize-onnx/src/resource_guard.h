@@ -1,7 +1,7 @@
 #pragma once
 #include <functional>
 
-namespace torch { namespace jit {
+namespace onnx { namespace optimization {
 
 class ResourceGuard {
   std::function<void()> _destructor;

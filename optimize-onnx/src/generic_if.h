@@ -4,11 +4,11 @@
   auto && __match_key = x; \
   switch(__match_key->kind()) { \
     case FullKind: { \
-      auto * value = static_cast<Constness ::torch::jit::Kind*>(__match_key); (void) value;
+      auto * value = static_cast<Constness ::onnx::optimization::Kind*>(__match_key); (void) value;
 #define GENERIC_ELSEIF(Constness, FullKind, Kind) \
     } break; \
     case FullKind: { \
-      auto * value = static_cast<Constness ::torch::jit::Kind*>(__match_key); (void) value;
+      auto * value = static_cast<Constness ::onnx::optimization::Kind*>(__match_key); (void) value;
 #define GENERIC_ELSE() \
     } break; \
     default: {

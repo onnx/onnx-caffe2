@@ -4,10 +4,13 @@
 #include <string>
 #include <memory>
 #include <vector>
-#include "torch/csrc/jit/interned_strings.h"
+
 #include <ATen/ATen.h>
 
-namespace torch { namespace jit {
+#include "interned_strings.h"
+#include "tensor.h"
+
+namespace onnx { namespace optimization {
 
 enum class AttributeKind {
   f,fs,i,is,s,ss,t,ts,g,gs
@@ -69,8 +72,8 @@ using IntAttr = ScalarAttributeValue<int64_t,AttributeKind::i>;
 using IntsAttr = VectorAttributeValue<int64_t,AttributeKind::is>;
 using StringAttr = ScalarAttributeValue<std::string,AttributeKind::s>;
 using StringsAttr = VectorAttributeValue<std::string,AttributeKind::ss>;
-using TensorAttr = ScalarAttributeValue<at::Tensor,AttributeKind::t>;
-using TensorsAttr = VectorAttributeValue<at::Tensor,AttributeKind::ts>;
+using TensorAttr = ScalarAttributeValue<Tensor,AttributeKind::t>;
+using TensorsAttr = VectorAttributeValue<Tensor,AttributeKind::ts>;
 struct Graph;
 using GraphAttr = ScalarAttributeValue<std::shared_ptr<Graph>,AttributeKind::g>;
 using GraphsAttr = VectorAttributeValue<std::shared_ptr<Graph>,AttributeKind::gs>;

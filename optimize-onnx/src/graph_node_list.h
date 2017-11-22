@@ -1,6 +1,6 @@
-#include "torch/csrc/assertions.h"
+#include "assertions.h"
 
-namespace torch { namespace jit {
+namespace onnx { namespace optimization {
 
 // Intrusive doubly linked lists with sane reverse iterators.
 // The header file is named generic_graph_node_list.h because it is ONLY
@@ -146,7 +146,7 @@ static inline bool operator!=(generic_graph_node_list_iterator<T> a, generic_gra
 namespace std {
 
 template<typename T>
-struct iterator_traits<torch::jit::generic_graph_node_list_iterator<T>> {
+struct iterator_traits<onnx::optimization::generic_graph_node_list_iterator<T>> {
   using difference_type = int64_t;
   using value_type = T*;
   using pointer = T**;

@@ -3,10 +3,12 @@
 scripts_dir=$(dirname $(readlink -e "${BASH_SOURCE[0]}"))
 source "$scripts_dir/common";
 
+pip install protobuf PyYAML
+
 [[ -n "$CAFFE2_VERSION" ]] || die "CAFFE2_VERSION not set"
 
 onnx_c2_dir="$PWD"
-pip install -e $onnx_c2_dir
+CC=gcc-5 CXX=g++-5 pip install -e $onnx_c2_dir
 
 # setup caffe2
 c2_dir="$workdir/caffe2"

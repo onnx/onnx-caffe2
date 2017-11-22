@@ -3,10 +3,10 @@
 #include <string>
 #include <unordered_map>
 #include <mutex>
-#include "torch/csrc/assertions.h"
-#include "torch/csrc/jit/interned_strings.h"
+#include "assertions.h"
+#include "interned_strings.h"
 
-namespace torch { namespace jit {
+namespace onnx { namespace optimization {
 
 struct InternedStrings {
   InternedStrings()
