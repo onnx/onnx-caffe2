@@ -1,4 +1,4 @@
-#include "torch/csrc/assertions.h"
+#include "assertions.h"
 
 #include <cstdarg>
 #include <cstdio>

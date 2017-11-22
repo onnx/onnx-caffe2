@@ -4,7 +4,7 @@
 #include <string>
 #include <unordered_map>
 
-namespace torch { namespace jit {
+namespace onnx { namespace optimization {
 
 using Symbol = uint32_t;
 

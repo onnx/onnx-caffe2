@@ -11,27 +11,18 @@
 
 #include <ATen/ATen.h>
 
-#include "torch/csrc/utils/object_ptr.h"
-#include "torch/csrc/utils/auto_gpu.h"
-#include "torch/csrc/utils/disallow_copy.h"
-#include "torch/csrc/utils/python_stub.h"
+#include "utils/disallow_copy.h"
 
 #include "ATen/ArrayRef.h"
-#include "torch/csrc/jit/generic_if.h"
-#include "torch/csrc/assertions.h"
-#include "torch/csrc/jit/interned_strings.h"
-#include "torch/csrc/jit/attributes.h"
-#include "torch/csrc/jit/resource_guard.h"
-#include "torch/csrc/jit/type.h"
-#include "torch/csrc/jit/graph_node_list.h"
+#include "generic_if.h"
+#include "assertions.h"
+#include "interned_strings.h"
+#include "attributes.h"
+#include "resource_guard.h"
+#include "type.h"
+#include "graph_node_list.h"
 
-namespace torch { namespace autograd {
-
-struct Function;
-
-}} // namespace torch::autograd
-
-namespace torch { namespace jit {
+namespace onnx { namespace optimization {
 
 // Graph represents one "function" of computation.
 // It uses a simple ownership model where the graph owns all the nodes inside it.
@@ -60,21 +51,12 @@ static inline bool operator==(const Use & a, const Use & b) {
   return a.user == b.user && a.offset == b.offset;
 }
 
-// SourceLocation represents source code-level debug information for a node.
-// It contains a Python stack trace that represents the provenance of a given
-// node in the trace.
-struct SourceLocation {
-  SourceLocation(std::string python_traceback)
-  : python_traceback(std::move(python_traceback)) {}
-  std::string python_traceback;
-};
 
 // the list types are intentionally simple, but we type-def
 // them here so if we need to change them, refactoring will be easier
 using node_list = std::vector<Node*>;
 using value_list = std::vector<Value*>;
 using use_list = std::vector<Use>;
-using pyobj_list = std::vector<THPObjectPtr>;
 template<typename T>
 using ArrayRef = at::ArrayRef<T>;
 using NodeKind = Symbol;
@@ -90,43 +72,41 @@ private:
   size_t unique_ = 0;          // unique id
   size_t stage_ = 0;           // 0-forward, 1-backward, 2-double-backward,...
   use_list uses_;
-  std::string debug_name_;
-  TypePtr type_;
+  bool has_name_;
+  std::string unique_name_;
+  onnx::TensorProto_DataType elem_type_;
+  std::vector<Dimension> sizes_;
 public:
-  bool hasType() const {
-    return type_ != nullptr;
-  }
-  Value* setType(const TypePtr type) {
-    type_ = type;
+  Value* setElemType(onnx::TensorProto_DataType elem_type) {
+    elem_type_ = elem_type;
     return this;
   }
-  void inferTypeFrom(const at::Tensor& output) {
-    setType(std::make_shared<TensorType>(output));
+  onnx::TensorProto_DataType elemType() const {
+    return elem_type_;
   }
-  Value* setDebugName(const std::string & name) {
-    debug_name_ = name;
+  Value* setSizes(const std::vector<Dimension>& sizes) {
+    sizes_ = sizes;
     return this;
   }
-  const std::string & debugName() const {
-    return debug_name_;
-  }
-  const TypePtr & type() const {
-    JIT_ASSERT(type_ != nullptr);
-    return type_;
-  }
-  const TypePtr & typeOption() const {
-    return type_;
-  }
-  bool isHandle() const {
-    return hasType() && type()->kind() == TypeKind::HandleType;
+  const std::vector<Dimension>& sizes() const {
+    return sizes_;
   }
   size_t unique() const {
     return unique_;
   }
+  bool has_name() const {
+    return has_name_;
+  }
+
   std::string uniqueName() const {
-    if(debug_name_.size() > 0)
-      return debugName() + "_" + std::to_string(unique());
+    if(unique_name_.size() > 0)
+      return unique_name_;
     return std::to_string(unique());
+  }
+  Value* setUniqueName(const std::string & name) {
+    has_name_ = true;
+    unique_name_ = name;
+    return this;
   }
   Value* setStage(size_t s) {
     stage_ = s;
@@ -163,8 +143,11 @@ public:
   void replaceAllUsesWith(Value * newValue);
 
   Value* copyMetadata(Value * from) {
-    if(from->hasType()) setType(from->type());
-    setDebugName(from->debugName());
+    setElemType(from->elemType());
+    setSizes(from->sizes());
+    if (!from->unique_name_.empty()) {
+      setUniqueName(from->uniqueName());
+    }
     return this;
   }
 
@@ -199,20 +182,36 @@ private:
   std::vector<Value*> inputs_;
   std::vector<Value*> outputs_;
   Graph* graph_;
-  std::shared_ptr<SourceLocation> source_location_;
   size_t stage_;
+  bool has_name_;
+  std::string name_;
+  bool has_doc_string_;
+  std::string doc_string_;
 protected:
   Node(Graph * graph_, NodeKind kind_); //defined after graph
 public:
+  bool has_name() {
+    return has_name_;
+  }
+  const std::string& name() {
+    return name_;
+  }
+  void setName(const std::string& name) {
+    has_name_ = true;
+    name_ = name;
+  }
+  bool has_doc_string() {
+    return has_doc_string_;
+  }
+  const std::string& docString() {
+    return doc_string_;
+  }
+  void setDocString(const std::string& doc_string) {
+    has_doc_string_ = true;
+    doc_string_ = doc_string;
+  }
   NodeKind kind() const {
     return kind_;
-  }
-  Node* setSourceLocation(std::shared_ptr<SourceLocation> sl) {
-    source_location_ = sl;
-    return this;
-  }
-  std::shared_ptr<SourceLocation> getSourceLocation() const {
-    return source_location_;
   }
   Graph * owningGraph() {
     return graph_;
@@ -519,7 +518,6 @@ private:
     this->next() = nullptr;
     this->prev() = nullptr;
   }
-  void lint() const;
 protected:
   // subclasses must override
   // this function is used by createClone to initialize a new version
@@ -537,7 +535,6 @@ protected:
   // NB: This does NOT clone stages.  You're expected to set the stage correctly
   // if you are going to preserve it.
   virtual void cloneFrom(Node * s) {
-    setSourceLocation(s->getSourceLocation());
     copyAttributes(*s);
   }
 };
@@ -547,7 +544,6 @@ TH_DISALLOW_COPY_AND_ASSIGN(Graph);
 friend struct Node;
 friend struct Value;
 private:
-
   // only used to keep track of allocated nodes
   // actual representation of Graph is done with
   // inputs, outputs, nodes
@@ -565,12 +561,41 @@ private:
   Node * const output_;
   Node * const input_;
 
+  std::vector<Tensor> initializers_;
+  std::vector<std::string> initializer_names_;
+
+  bool has_name_;
+  std::string name_;
+  bool has_doc_string_;
+  std::string doc_string_;
 public:
   Graph()
   : next_unique_(0)
   , new_node_stage_(0)
+  , has_name_(false)
+  , has_doc_string_(false)
   , output_(initOutput(create(kReturn, 0))), input_(create(kParam, 0)) {}
 
+  bool has_doc_string() {
+    return has_doc_string_;
+  }
+  const std::string& docString() {
+    return doc_string_;
+  }
+  void setDocString(const std::string& doc_string) {
+    has_doc_string_ = true;
+    doc_string_ = doc_string;
+  }
+  void addInitializer(Tensor initializer, std::string name) {
+    initializers_.push_back(std::move(initializer));
+    initializer_names_.push_back(std::move(name));
+  }
+  const std::vector<Tensor>& initializers() {
+    return initializers_;
+  }
+  const std::vector<std::string>& initializer_names() {
+    return initializer_names_;
+  }
   at::ArrayRef<Value*> inputs() {
     return input_->outputs();
   }
@@ -665,38 +690,6 @@ public:
     return n;
   }
 
-  Node * createUndefined() {
-    return create(kUndefined);
-  }
-  Node * createConstant(const at::Tensor& ref) {
-    JIT_ASSERT(ref.defined());
-    AutoGPU guard(ref.type().isCuda() ? ref.get_device() : -1);
-    auto n = create(kConstant);
-    n->t_(kvalue, ref.clone());
-    return n;
-  }
-  Node * createFusionGroup() {
-    auto n = create(kFusionGroup, 0);
-    n->g_(kSubgraph,std::make_shared<Graph>());
-    return n;
-  }
-  Node * createPythonOp(THPObjectPtr&& pyobj, const std::string & cconv, bool is_legacy, pyobj_list&& scalar_args);
-  Node * createCppOp(const std::shared_ptr<torch::autograd::Function> & fn);
-  // clone n, making a new node in _this_ graph.
-  // use node_map to translate inputs of n to inputs of the cloned node
-  Node * createClone(Node * n, std::function<Value*(Value*)> value_map) {
-    //n can be from a different graph
-    Node * r = n->allocNewInstance(this);
-    for(auto o : n->outputs()) {
-      r->addOutput()->copyMetadata(o);
-    }
-    r->cloneFrom(n);
-    for(auto i : n->inputs()) {
-      r->addInput(value_map(i));
-    }
-    return r;
-  }
-
   Node * appendNode(Node * n) {
     JIT_ASSERT(n->graph_ == this && !n->inGraphList());
     n->insertBefore(output_);
@@ -709,11 +702,6 @@ public:
     return n;
   }
 
-  // Checks well-formedness and invariants of graph
-  void lint() const;
-  // for use in debugger
-  void dump() const;
-
   ~Graph() {
     for (const Node * n : all_nodes)
       delete n;
@@ -725,6 +713,19 @@ public:
     std::ostringstream oss;
     oss << *this;
     return oss.str();
+  }
+
+  bool has_name() const {
+    return has_name_;
+  }
+
+  std::string name() const {
+    return name_;
+  }
+
+  void setName(std::string name) {
+    has_name_ = true;
+    name_ = name;
   }
 
   friend std::ostream& operator<<(std::ostream & out, const Graph & g);
@@ -756,6 +757,7 @@ inline Value::Value(Node * node_, size_t offset_)
 : node_(node_),
   offset_(offset_),
   unique_(node_->graph_->next_unique_++),
+  has_name_(true),
   stage_(node_->graph_->new_node_stage_) {
   node_->graph_->all_values.emplace(this);
 }
@@ -780,6 +782,8 @@ inline void Value::replaceAllUsesWith(Value * newValue) {
 inline Node::Node(Graph * graph_, NodeKind kind_) :
   kind_(kind_),
   graph_(graph_),
+  has_name_(false),
+  has_doc_string_(false),
   stage_(graph_->new_node_stage_) {
   graph_->all_nodes.emplace(this);
 }
@@ -804,116 +808,7 @@ inline void Node::destroy() {
   graph_->freeNode(this);
 }
 
-// Helper macros for constructing switch statements over Node types
-// instead of heavy-weight visitors
-// read 'between' these defines to see how they turn into a big switch
-// statement
-
-// Mutable case
-// The IFM/ELSEIFM indicate that subclass *refinement* occurs.
-// This is only valid for node types for which we have subclasses.
-#define IR_IFM(x,Kind) GENERIC_IF(,k##Kind,x,Kind)
-#define IR_ELSEIFM(Kind) GENERIC_ELSEIF(,k##Kind,Kind)
-
-#define IR_IFM_CONST(x,Kind) GENERIC_IF(const,k##Kind,x,Kind)
-#define IR_ELSEIFM_CONST(Kind) GENERIC_ELSEIF(const,k##Kind,Kind)
-
-#define IR_IF(x, Kind) \
-  auto && __match_key = x; \
-  switch(__match_key->kind()) { \
-    case ::torch::jit::k##Kind: { \
-      auto * value = __match_key; (void) value;
-#define IR_ELSEIF(Kind) \
-    } break; \
-    case ::torch::jit::k##Kind: { \
-      auto * value = __match_key; (void) value;
-
-#define IR_ELSE() GENERIC_ELSE()
-#define IR_END() GENERIC_END()
-
-/* example:
-  Node * n = ...;
-  IR_IF(n,Select)
-    cout << "Select of" << value->input() << "\n";
-  IR_ELSEIF(PythonOp)
-    cout << value->pyobj << "\n";
-  IR_ELSEIF(Add)
-    cout << "Add" << \n";
-  IR_ELSE() // optional
-    cout << "something else\n";
-  IR_END()
-*/
-
-std::ostream& operator<<(std::ostream & out, const Graph & g);
-std::ostream& operator<<(std::ostream & out, const Type & t);
-std::ostream& operator<<(std::ostream & out, const Node & t);
-
 /************* All nodes not required to be defined before Graph **************/
-
- // execute a Python function, used for Ops we can't optimize but that we want to optimize around
-struct PythonOp : public Node {
-  static const NodeKind Kind = kPythonOp;
-  PythonOp(Graph * graph)
-  : Node(graph,kPythonOp) {}
-  PythonOp* init(THPObjectPtr&& pyobj, const std::string & cconv, bool is_legacy, pyobj_list&& scalar_args) {
-    this->pyobj = std::move(pyobj);
-    this->scalar_args = std::move(scalar_args);
-    this->cconv = cconv;
-    this->is_legacy = is_legacy;
-    return this;
-  }
-  virtual Node * allocNewInstance(Graph * g) override {
-    return new PythonOp(g);
-  }
-  //TODO: make this non-autograd specific
-  //remove is_legacy, avoid THPObjectPtr to avoid big PyTorch dependency
-
-  // The Python object which contains the implementation of this function.
-  // This is either a class (non-legacy) or an object (legacy).  See
-  // TraceInterpreterState for execution semantics.
-  THPObjectPtr pyobj;
-  // The calling convention for the Python function.
-  // 's' -- python scalar argument
-  // 't' -- tensor argument
-  std::string cconv;
-  bool is_legacy;
-  // Scalar arguments to the Python function.  Not necessarily passed to
-  // the function in this order; see cconv for the correct order.
-  std::vector<THPObjectPtr> scalar_args;
-  std::string name() const;
-  virtual void cloneFrom(Node * other_) override;
-};
-inline Node * Graph::createPythonOp(THPObjectPtr&& pyobj, const std::string & cconv, bool is_legacy, pyobj_list&& scalar_args) {
-  auto op = new PythonOp(this);
-  return op->init(std::move(pyobj),cconv,is_legacy,std::move(scalar_args));
-}
-
-// A Cpp operator is an operator which dispatches directly to an autograd function.
-// TODO: These are not executable without reentrant engine.
-struct CppOp : public Node {
-  static const NodeKind Kind = kCppOp;
-  CppOp(Graph * g)
-  : Node(g,kCppOp) {}
-  std::shared_ptr<torch::autograd::Function> fn;
-  std::string name() const;
-  CppOp* init(std::shared_ptr<torch::autograd::Function> fn) {
-    JIT_ASSERT(fn);
-    this->fn = std::move(fn);
-    return this;
-  }
-  virtual Node * allocNewInstance(Graph * g) override {
-    return new CppOp(g);
-  }
-  virtual void cloneFrom(Node * other_) override {
-    Node::cloneFrom(other_);
-    auto other = other_->cast<CppOp>();
-    this->fn = other->fn;
-  }
-};
-inline Node * Graph::createCppOp(const std::shared_ptr<torch::autograd::Function> & fn) {
-  auto op = new CppOp(this);
-  return op->init(fn);
-}
 
 inline graph_node_list_iterator Node::iterator() {
   return graph_node_list_iterator(this, 0);
@@ -928,6 +823,4 @@ inline const_graph_node_list_iterator Node::reverseIterator() const {
   return iterator().reverse();
 }
 
-void LintGraph(std::shared_ptr<Graph>& graph);
-
-}} // namespace torch::jit
+}} // namespace onnx::optimization
