@@ -92,14 +92,6 @@ def name_inputs(onnx_model, inputs):
     return {onnx_model.graph.input[i].name: inputs[i] for i in range(len(inputs))}
 
 
-def benchmark_caffe2_model(init_net, predict_net, warmup_iters=3, main_iters=10, layer_details=True):
-    ws = Workspace()
-    if init_net:
-        ws.RunNetOnce(init_net)
-    ws.CreateNet(predict_net)
-    ws.BenchmarkNet(predict_net.name, warmup_iters, main_iters, layer_details)
-
-
 def load_caffe2_net(file):
     net = caffe2_pb2.NetDef()
     with open(file, "rb") as f:
@@ -115,18 +107,34 @@ def save_caffe2_net(net, file, output_txt=False):
             f.write(str(net))
 
 
+def benchmark_caffe2_model(init_net, predict_net, warmup_iters=3, main_iters=10, layer_details=True):
+    '''
+        Run the benchmark net on the target model.
+        Return the execution time per iteration (millisecond).
+    '''
+    ws = Workspace()
+    if init_net:
+        ws.RunNetOnce(init_net)
+    ws.CreateNet(predict_net)
+    results = ws.BenchmarkNet(predict_net.name, warmup_iters, main_iters, layer_details)
+    return results[0]
+
+
 def benchmark_pytorch_model(model, inputs, training=False, warmup_iters=3,
                             main_iters=10, verbose=False):
+    '''
+        Run the model several times, and measure the execution time.
+        Return the execution time per iteration (millisecond).
+    '''
     for _i in range(warmup_iters):
-        ts = time.time()
         model(*inputs)
-        te = time.time()
     total_pytorch_time = 0.0
     for _i in range(main_iters):
         ts = time.time()
         model(*inputs)
         te = time.time()
-        total_pytorch_time = te - ts + total_pytorch_time
+        total_pytorch_time += te - ts
     log.info("The PyTorch model execution time per iter is {} milliseconds, "
              "{} iters per second.".format(total_pytorch_time / main_iters * 1000,
                                            main_iters / total_pytorch_time))
+    return total_pytorch_time * 1000 / main_iters
