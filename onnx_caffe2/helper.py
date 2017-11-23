@@ -73,23 +73,22 @@ def c2_native_run_net(init_net, predict_net, inputs):
         uninitialized = [input_name
                          for input_name in predict_net.external_input
                          if not ws.HasBlob(input_name)]
-        assert len(uninitialized) == len(inputs)
-        for key, value in zip(uninitialized, inputs):
-            ws.FeedBlob(key, value, predict_net.device_option)
+        if len(uninitialized) == len(inputs):
+            for key, value in zip(uninitialized, inputs):
+                ws.FeedBlob(key, value, predict_net.device_option)
+        else:
+            # If everything is initialized,
+            # we just initialized the first len(inputs) external_input.
+            assert(len(inputs) <= len(predict_net.external_input))
+            for i in range(len(inputs)):
+                ws.FeedBlob(predict_net.external_input[i], inputs[i],
+                            predict_net.device_option)
 
     ws.RunNetOnce(predict_net)
 
     output_names = predict_net.external_output
     output_values = [ws.FetchBlob(name) for name in output_names]
     return ws, namedtupledict('Outputs', output_names)(*output_values)
-
-
-def name_inputs(onnx_model, inputs):
-    '''
-        Pair the numpy arrays in inputs with their names in onnx_model.
-        The names are usually needed for Caffe2 blobs initialization.
-    '''
-    return {onnx_model.graph.input[i].name: inputs[i] for i in range(len(inputs))}
 
 
 def load_caffe2_net(file):
@@ -117,6 +116,7 @@ def benchmark_caffe2_model(init_net, predict_net, warmup_iters=3, main_iters=10,
         ws.RunNetOnce(init_net)
     ws.CreateNet(predict_net)
     results = ws.BenchmarkNet(predict_net.name, warmup_iters, main_iters, layer_details)
+    del ws
     return results[0]
 
 

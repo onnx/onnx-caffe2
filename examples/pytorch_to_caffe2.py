@@ -7,7 +7,7 @@ from caffe2.proto import caffe2_pb2
 from caffe2.python import core
 from torch.autograd import Variable
 from onnx_caffe2.backend import Caffe2Backend
-from onnx_caffe2.helper import c2_native_run_net, name_inputs, save_caffe2_net, load_caffe2_net, \
+from onnx_caffe2.helper import c2_native_run_net, save_caffe2_net, load_caffe2_net, \
     benchmark_caffe2_model, benchmark_pytorch_model
 
 import io
@@ -83,7 +83,7 @@ pytorch_results = pytorch_model(*inputs)
 
 # Compute the results using the Caffe2 model.
 log.info("Run the Caffe2 model.")
-_, caffe2_results = c2_native_run_net(init_net, predict_net, name_inputs(onnx_model, caffe2_inputs))
+_, caffe2_results = c2_native_run_net(init_net, predict_net, caffe2_inputs)
 
 # Check the decimal precision of the exported Caffe2.
 expected_decimal = 5
