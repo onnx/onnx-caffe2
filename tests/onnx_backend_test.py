@@ -15,7 +15,7 @@ pytest_plugins = 'onnx.backend.test.report',
 
 backend_test = onnx.backend.test.BackendTest(c2, __name__)
 if 'TRAVIS' in os.environ:
-    backend_test.exclude('test_vgg19')
+    backend_test.exclude('(test_vgg19|test_vgg16)')
 # import all test cases at global scope to make them visible to python.unittest
 globals().update(backend_test
                  .enable_report()
