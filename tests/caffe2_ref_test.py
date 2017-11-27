@@ -305,6 +305,9 @@ class TestCaffe2End2End(TestCase):
     def test_resnet50(self):
         self._test_net('resnet50')
 
+    @unittest.skipIf(
+        os.environ.get('TRAVIS'),
+        'Taking too long to download!')
     def test_vgg16(self):
         self._test_net('vgg16')
 
