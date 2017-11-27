@@ -260,7 +260,6 @@ class Caffe2Backend(Backend):
                 set(pads[:2] + pads[4:6]) == {0}):
             raise ValueError('Caffe2 only supports padding 2D Tensor, whereas padding is ' + str(pads))
         pads[:] = pads[2:4] + pads[6:8]
-
         return cls._common_onnx_node_to_caffe2_op(n)
 
     @classmethod
@@ -630,7 +629,8 @@ class Caffe2Backend(Backend):
         return names
 
     @classmethod
-    def onnx_graph_to_caffe2_net(cls, graph_def):
+    def onnx_graph_to_caffe2_net(cls, graph_def, device="CPU"):
+        device_option = get_device_option(Device(device))
         cls._inplace_rewrite(graph_def)
         if graph_def.initializer:
             init_net = cls.onnx_initializer_to_caffe2_init_net(
