@@ -257,10 +257,9 @@ class Caffe2Backend(Backend):
         pads = n.attrs['pads']
         if not (len(pads) == 8 and
                 # first two dim is for batch and channel
-                set(pads[:4]) == {0}):
-            raise ValueError('Caffe2 only supports padding 2D Tensor')
-        t, l, b, r = pads[4:]
-        pads[:] = [t, b, l, r]
+                set(pads[:2] + pads[4:6]) == {0}):
+            raise ValueError('Caffe2 only supports padding 2D Tensor, whereas padding is ' + str(pads))
+        pads[:] = pads[2:4] + pads[6:8]
 
         return cls._common_onnx_node_to_caffe2_op(n)
 
