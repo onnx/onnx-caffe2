@@ -673,6 +673,10 @@ class Caffe2Backend(Backend):
 
             init_net.op.extend([op_def])
 
+        # Set the device option for the init_net and predict_net.
+        init_net.device_option.CopyFrom(device_option)
+        predict_net.device_option.CopyFrom(device_option)
+
         return init_net, predict_net
 
     @classmethod
