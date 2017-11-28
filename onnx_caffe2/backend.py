@@ -508,11 +508,9 @@ class Caffe2Backend(Backend):
         external_inputs = model.graph.input[:]
         del model.graph.input[:]
 
-        _, predict_net = cls.onnx_graph_to_caffe2_net(model.graph)
-        predict_net.device_option.CopyFrom(device_option)
+        _, predict_net = cls.onnx_graph_to_caffe2_net(model.graph, device)
         predict_net.external_input.extend(
                 value_info.name for value_info in external_inputs)
-        predict_net.device_option.CopyFrom(get_device_option(Device(device)))
 
         # Restore these so as not to mutate input
         model.graph.initializer.extend(initializer)
@@ -672,6 +670,10 @@ class Caffe2Backend(Backend):
             values_arg.floats.extend(np.ones(shape).flatten().tolist())
 
             init_net.op.extend([op_def])
+
+        # Set the device option for the init_net and predict_net.
+        init_net.device_option.CopyFrom(device_option)
+        predict_net.device_option.CopyFrom(device_option)
 
         return init_net, predict_net
 
