@@ -44,7 +44,8 @@ class OnnxAttributes(dict):
 
     def caffe2(self, kmap=lambda k: k):
         for k, v in self.items():
-            yield caffe2.python.utils.MakeArgument(kmap(k), v)
+            if kmap(k) != '':
+                yield caffe2.python.utils.MakeArgument(kmap(k), v)
 
 
 # TODO: Move this into ONNX main library
@@ -108,12 +109,14 @@ class Caffe2Backend(Backend):
         'BatchNormalization':    'SpatialBN',
         'InstanceNormalization': 'InstanceNorm',
         'MatMul':                'BatchMatMul',
+        'Upsample':              'ResizeNearest',
     }
 
     _global_renamed_attrs = {'kernel_shape': 'kernels'}
     _per_op_renamed_attrs = {
         'Squeeze':              {'axes': 'dims'},
         'Transpose':            {'perm': 'axes'},
+        'Upsample':             {'mode': ''},
     }
 
     # operators whose behavior is different beyond renaming
