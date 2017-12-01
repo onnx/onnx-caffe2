@@ -128,6 +128,7 @@ class Caffe2Backend(Backend):
         'InstanceNormalization': 'InstanceNorm',
         'MatMul':                'BatchMatMul',
         'Upsample':              'ResizeNearest',
+        'Equal':                 'EQ',
     }
 
     _global_renamed_attrs = {'kernel_shape': 'kernels'}
