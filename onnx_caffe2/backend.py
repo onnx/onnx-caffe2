@@ -168,7 +168,8 @@ class Caffe2Backend(Backend):
                 for key, value in inputs.items():
                     workspace.FeedBlob(key, value)
             else:
-                assert(len(node.input) == len(inputs))
+                assert len(node.input) == len(inputs), "{}: expected {} but got {}".format(
+                    node.op_type, len(node.input), len(inputs))
                 for key, value in zip(node.input, inputs):
                     workspace.FeedBlob(key, value)
 
