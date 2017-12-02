@@ -6,19 +6,24 @@ Caffe2 implementation of Open Neural Network Exchange (ONNX).
 
 Repository location may change.
 
-# Folder Structure
-
-- onnx_caffe2/: the main folder that all code lies under
-  - frontend.py: translate from caffe2 model to onnx model
-  - backend.py: execution engine that runs onnx on caffe2
-- tests/: test files
-
 # Installation
 
 ```
 pip install onnx-caffe2
 ```
 
+# Usage
+
+* [ONNX to Caffe2](https://github.com/onnx/tutorials/blob/master/tutorials/OnnxCaffe2Import.ipynb)
+* [Caffe2 to ONNX](https://github.com/onnx/tutorials/blob/master/tutorials/Caffe2OnnxExport.ipynb)
+* [other end-to-end tutorials](https://github.com/onnx/tutorials)
+
+# Folder Structure
+
+- onnx_caffe2/: the main folder that all code lies under
+  - frontend.py: translate from caffe2 model to onnx model
+  - backend.py: execution engine that runs onnx on caffe2
+- tests/: test files
 
 # Testing
 
