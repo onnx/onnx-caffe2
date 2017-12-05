@@ -8,14 +8,16 @@ from caffe2.proto import caffe2_pb2
 from onnx.backend.base import BackendRep, namedtupledict
 
 class Caffe2Rep(BackendRep):
-    def __init__(self, predict_net, workspace, uninitialized):
+    def __init__(self, init_net, predict_net, workspace, uninitialized):
         super(Caffe2Rep, self).__init__()
+        self.init_net = init_net
         self.predict_net = predict_net
         self.workspace = workspace
         # The list of uninitialized external_inputs in workspace, we need this to
         # pair the name with given sequence inputs.
         self.uninitialized = uninitialized
-        self.net_created = False
+        self.nets_created = False
+        self.ran_init_net = False
 
     @property
     def _name_scope(self):
@@ -44,9 +46,13 @@ class Caffe2Rep(BackendRep):
                 else:
                     # single input
                     workspace.FeedBlob(self.uninitialized[0], inputs)
-                if not self.net_created:
+                if not self.nets_created:
+                    workspace.CreateNet(self.init_net)
                     workspace.CreateNet(self.predict_net)
-                    self.net_created = True
+                    self.nets_created = True
+                if not self.ran_init_net:
+                    workspace.RunNet(self.init_net.name)
+                    self.ran_init_net = True
                 workspace.RunNet(self.predict_net.name)
             output_values = [workspace.FetchBlob(name)
                              for name in self.predict_net.external_output]

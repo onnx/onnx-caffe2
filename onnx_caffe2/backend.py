@@ -17,7 +17,7 @@ from caffe2.proto import caffe2_pb2
 import caffe2.python.utils
 import numpy as np
 import onnx
-from onnx import checker, GraphProto, TensorProto, AttributeProto
+from onnx import checker, GraphProto, TensorProto, AttributeProto, ModelProto
 import onnx.numpy_helper
 import onnx.defs
 from onnx.backend.base import Backend, Device, DeviceType, namedtupledict
@@ -520,7 +520,7 @@ class Caffe2Backend(Backend):
             ws.FeedBlob(value_info.name, np.ones(shape), device_option)
 
     @staticmethod
-    def optimize_onnx(input):
+    def optimize_onnx(input, init=False, predict=False):
         # this is where the binary is located when onnx-caffe2 has been installed
         executable = os.path.join(os.path.realpath(os.path.dirname(__file__)),
                                   '..', '..', '..', '..', 'bin', 'optimize-onnx')
@@ -528,7 +528,14 @@ class Caffe2Backend(Backend):
         # just look for it in PATH
         if not os.path.isfile(executable):
             executable = 'optimize-onnx'
-        proc = Popen([executable], stdin=PIPE, stdout=PIPE, stderr=PIPE)
+        cmd = [executable]
+        if init and not predict:
+            cmd.append('init')
+        elif predict and not init:
+            cmd.append('predict')
+        elif init and predict:
+            raise Exception("optimize_onnx called with both init and predict set")
+        proc = Popen(cmd, stdin=PIPE, stdout=PIPE, stderr=PIPE)
         stdout, stderr = proc.communicate(input)
         assert proc.returncode == 0
         return stdout
@@ -578,12 +585,12 @@ class Caffe2Backend(Backend):
             device_option,
         )
 
-        _, predict_net = cls._onnx_model_to_caffe2_net(model, device, opset_version, False)
+        init_net, predict_net = cls._onnx_model_to_caffe2_net(model, device, opset_version, False)
 
-        uninitialized = [x for x in predict_net.external_input
-                         if x not in initialized]
+        uninitialized = list(set(x for x in init_net.external_input if x not in initialized) |
+                             set(x for x in predict_net.external_input if x not in init_net.external_output))
 
-        retval = Caffe2Rep(predict_net, ws, uninitialized)
+        retval = Caffe2Rep(init_net, predict_net, ws, uninitialized)
         return retval
 
     @classmethod
@@ -695,77 +702,43 @@ class Caffe2Backend(Backend):
         return names
 
     @classmethod
-    def _onnx_model_to_caffe2_net(cls, model, device, opset_version, include_inputs_and_initializers):
+    def _onnx_model_to_caffe2_net(cls, onnx_model, device, opset_version, include_initializers):
         device_option = get_device_option(Device(device))
 
-        model.ParseFromString(cls.optimize_onnx(model.SerializeToString()))
+        init_model = ModelProto()
+        init_model.ParseFromString(cls.optimize_onnx(onnx_model.SerializeToString(), init=True))
+        cls._inplace_rewrite(init_model.graph)
 
-        graph_def = model.graph
+        predict_model = ModelProto()
+        predict_model.ParseFromString(cls.optimize_onnx(onnx_model.SerializeToString(), predict=True))
+        cls._inplace_rewrite(predict_model.graph)
 
-        cls._inplace_rewrite(graph_def)
-        if include_inputs_and_initializers:
-            init_net = cls.onnx_initializer_to_caffe2_init_net(
-                graph_def.initializer)
-            initialized = {init.name for init in graph_def.initializer}
-        else:
-            init_net = caffe2_pb2.NetDef()
-            initialized = set()
-
-        dummy_name(cls._all_names_in_graph(graph_def) | initialized)
-
+        init_net = caffe2_pb2.NetDef()
         predict_net = caffe2_pb2.NetDef()
-        predict_net.name = graph_def.name
-        for node in graph_def.node:
-            predict_net.op.extend(cls._onnx_node_to_caffe2_op(node, opset_version))
 
-        predict_net.external_input.extend(
-            value_info.name for value_info in graph_def.input)
-        predict_net.external_output.extend(
-            value_info.name for value_info in graph_def.output)
+        init_net.name = onnx_model.graph.name + '_init'
+        predict_net.name = onnx_model.graph.name + '_predict'
 
-        # Caffe2 predictor requires all input blobs (including the
-        # real model inputs) are initialized in init_net
-        if include_inputs_and_initializers:
-            for value_info in graph_def.input:
-                if value_info.name in initialized:
-                    continue
-                op_def = caffe2_pb2.OperatorDef()
-                op_def.output.extend([value_info.name])
-                op_def.type = 'GivenTensorFill'
+        if include_initializers:
+            init_net.op.extend(cls._create_tensor_filling_op(tp) for tp in init_model.graph.initializer)
 
-                shape = list(d.dim_value for d in value_info.type.tensor_type.shape.dim)
-                # TODO: Putting this in the init net will make it run faster, but it
-                # causes some tests to fail...
-                # shape = (1,)
+        dummy_name(cls._all_names_in_graph(init_model.graph) | cls._all_names_in_graph(predict_model.graph))
 
-                shape_arg = op_def.arg.add()
-                shape_arg.name = 'shape'
-                shape_arg.ints.extend(shape)
-
-                values_arg = op_def.arg.add()
-                values_arg.name = 'values'
-                values_arg.floats.extend(np.ones(shape).flatten().tolist())
-
-                init_net.op.extend([op_def])
-
-        # Set the device option for the init_net and predict_net.
-        init_net.device_option.CopyFrom(device_option)
-        predict_net.device_option.CopyFrom(device_option)
+        for net, model in ( (init_net, init_model), (predict_net, predict_model) ):
+            net.device_option.CopyFrom(device_option)
+            for node in model.graph.node:
+                net.op.extend(cls._onnx_node_to_caffe2_op(node, opset_version))
+            net.external_output.extend(
+                value_info.name for value_info in model.graph.output)
+            net.external_input.extend(
+                value_info.name for value_info in model.graph.input)
 
         return init_net, predict_net
 
     # wrapper for backwards compatability
     @classmethod
     def onnx_graph_to_caffe2_net(cls, model, device="CPU", opset_version=_known_opset_version):
-        return cls._onnx_model_to_caffe2_net(model, device=device, opset_version=opset_version, include_inputs_and_initializers=True)
-
-    @classmethod
-    def onnx_initializer_to_caffe2_init_net(cls, initializer, init_net_name='init'):
-        init_net = caffe2_pb2.NetDef()
-        init_net.name = init_net_name
-        init_net.op.extend(cls._create_tensor_filling_op(tp) for tp in initializer)
-        return init_net
-
+        return cls._onnx_model_to_caffe2_net(model, device=device, opset_version=opset_version, include_initializers=True)
 
     @classmethod
     def supports_device(cls, device_str):

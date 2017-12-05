@@ -11,6 +11,7 @@
 
 #include "export.h"
 #include "import.h"
+#include "optimize.h"
 
 // copied from https://github.com/onnx/onnx/blob/master/onnx/proto_utils.h
 template <typename Proto>
@@ -26,6 +27,10 @@ bool ParseProtoFromBytes(Proto* proto, const char* buffer, size_t length) {
 // reads a protobuf file on stdin and writes it back to stdout.
 int main(int argc, char** argv) {
 
+  // rudimentary argument parsing
+  bool init = (argc == 2 && std::string(argv[1]) == "init");
+  bool predict = (argc == 2 && std::string(argv[1]) == "predict");
+
 #ifdef _WIN32
   // https://docs.microsoft.com/en-us/cpp/c-runtime-library/reference/setmode
   _setmode(_fileno(stdin), _O_BINARY);
@@ -38,6 +43,10 @@ int main(int argc, char** argv) {
   onnx::ModelProto mp_in;
   ParseProtoFromBytes(&mp_in, buffer.str().c_str(), buffer.str().size());
   std::shared_ptr<onnx::optimization::Graph> g = onnx::optimization::ImportModel(mp_in);
+
+  if (g.get() != nullptr) {
+    g = onnx::optimization::optimize(g, init, predict);
+  }
 
   if (g.get() == nullptr) {
     std::cerr << "Warning: optimize-onnx is unable to parse input model" << std::endl;

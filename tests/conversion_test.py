@@ -5,6 +5,7 @@ from __future__ import print_function
 import json
 import tempfile
 import textwrap
+import traceback
 
 from caffe2.proto import caffe2_pb2
 from caffe2.python import brew, core
@@ -31,7 +32,7 @@ class TestConversion(TestCase):
         exc_info: {}
         '''.format(result.output,
                    result.exception,
-                   result.exc_info)))
+                   traceback.format_exception(*result.exc_info))))
         return result
 
     def test_caffe2_to_onnx(self):
