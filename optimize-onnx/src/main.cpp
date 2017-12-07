@@ -47,8 +47,9 @@ int main(int argc, char** argv) {
 
     onnx::optimization::encodeGraph(&mp_out, g);
 
-    // output IR version is not dependent on input IR version
-    mp_out.set_ir_version(3);
+    if (mp_in.has_producer_name()) {
+      mp_out.set_ir_version(mp_in.ir_version());
+    }
     if (mp_in.has_producer_name()) {
       mp_out.set_producer_name(mp_in.producer_name());
     }
@@ -63,6 +64,16 @@ int main(int argc, char** argv) {
     }
     if (mp_in.has_doc_string()) {
       mp_out.set_doc_string(mp_in.doc_string());
+    }
+    for (int i = 0; i < mp_in.opset_import_size(); i++) {
+      auto& oi_in = mp_in.opset_import(i);
+      auto* oi_out = mp_out.add_opset_import();
+      if (oi_in.has_domain()) {
+        oi_out->set_domain(oi_in.domain());
+      }
+      if (oi_in.has_version()) {
+        oi_out->set_version(oi_in.version());
+      }
     }
     for (int i = 0; i < mp_in.metadata_props_size(); i++) {
       auto& pp_in = mp_in.metadata_props(i);
