@@ -149,6 +149,7 @@ class Caffe2Backend(Backend):
         'GlobalMaxPool': '_create_conv_pool_op_base',
         'MaxPool': '_create_conv_pool_op_base',
         'Reshape': '_create_reshape',
+        'Gather': '_create_gather',
         'Gemm': '_create_gemm',
         'Pad': '_create_pad',
         'Concat': '_create_concat',
@@ -239,6 +240,20 @@ class Caffe2Backend(Backend):
     def _create_constant(cls, n, opset_version):
         assert len(n.outputs) == 1
         return cls._create_tensor_filling_op(n.attrs["value"], n.outputs[0])
+
+    @classmethod
+    def _create_gather(cls, n, opset_version):
+        (A, B) = n.inputs
+        (Y, ) = n.outputs
+        axis = n.attrs.get('axis', 0)
+
+        if axis == 0:
+            return core.CreateOperator("Gather", [A, B], [Y])
+        elif axis == 1:
+            return core.CreateOperator("BatchGather", [A, B], [Y])
+        raise ValueError(
+            'Caffe2 only supports Gather with axis being 1 or 2,' +
+            'whereas axis is ' + str(axis))
 
     @classmethod
     def _create_gemm(cls, n, opset_version):
