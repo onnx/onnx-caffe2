@@ -306,6 +306,9 @@ class Caffe2Backend(Backend):
                 # first two dim is for batch and channel
                 set(pads[:2] + pads[4:6]) == {0}):
             raise ValueError('Caffe2 only supports padding 2D Tensor, whereas padding is ' + str(pads))
+        # Guard the invalid (negative) pads attribute.
+        if min(pads) < 0:
+            raise ValueError('ONNX does not support negative pads in Pad, but get {}.'.format(pads))
         pads[:] = pads[2:4] + pads[6:8]
         return cls._common_onnx_node_to_caffe2_op(n, opset_version)
 
