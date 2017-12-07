@@ -80,7 +80,7 @@ def caffe2_to_onnx(caffe2_net,
 def onnx_to_caffe2(onnx_model, output, init_net_output):
     onnx_model_proto = ModelProto()
     onnx_model_proto.ParseFromString(onnx_model.read())
-    graph_def = onnx_model_proto.graph
-    init_net, predict_net = c2.onnx_graph_to_caffe2_net(graph_def)
+
+    init_net, predict_net = c2.onnx_graph_to_caffe2_net(onnx_model_proto)
     init_net_output.write(init_net.SerializeToString())
     output.write(predict_net.SerializeToString())

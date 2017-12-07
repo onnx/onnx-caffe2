@@ -22,3 +22,10 @@ env:
     - PB_VERSION=2.6.1
   matrix:
     - CAFFE2_VERSION=0d879ed9b496e94288f68299f36afac1d65ed64a
+
+addons:
+    apt:
+        sources:
+            - ubuntu-toolchain-r-test
+        packages:
+            - g++-5

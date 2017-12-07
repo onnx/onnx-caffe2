@@ -7,8 +7,10 @@ from collections import namedtuple
 import os
 import sys
 from setuptools import setup, find_packages, Command
+import distutils.command.build
 import setuptools.command.build_py
 import setuptools.command.develop
+import setuptools.command.install
 import subprocess
 from textwrap import dedent
 
@@ -57,15 +59,39 @@ class build_py(setuptools.command.build_py.build_py):
         setuptools.command.build_py.build_py.run(self)
 
 
+def build_optimize_onnx():
+    optimize_onnx_dir = os.path.join('build', 'optimize-onnx')
+    subprocess.check_call(['mkdir', '-p', optimize_onnx_dir])
+    subprocess.check_call(['cmake', os.path.join('..', '..', 'optimize-onnx')], cwd=optimize_onnx_dir)
+    subprocess.check_call(['make'], cwd=optimize_onnx_dir)
+
+class build(distutils.command.build.build):
+    def run(self):
+        self.run_command('build_py')
+        build_optimize_onnx()
+
 class develop(setuptools.command.develop.develop):
     def run(self):
         self.run_command('create_version')
+        self.run_command('build')
         setuptools.command.develop.develop.run(self)
+        source = os.path.join(TOP_DIR, 'build', 'optimize-onnx', 'src', 'optimize-onnx')
+        target = os.path.join(sys.prefix, 'bin', '')
+        subprocess.check_call(['ln', '-s', '-f', source, target])
+
+class install(setuptools.command.install.install):
+    def run(self):
+        setuptools.command.install.install.run(self)
+        source = os.path.join(TOP_DIR, 'build', 'optimize-onnx', 'src', 'optimize-onnx')
+        target = os.path.join(sys.prefix, 'bin', '')
+        subprocess.check_call(['cp', source, target])
 
 cmdclass={
     'create_version': create_version,
     'build_py': build_py,
+    'build': build,
     'develop': develop,
+    'install': install,
 }
 
 ################################################################################
