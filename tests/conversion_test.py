@@ -197,6 +197,7 @@ class TestConversion(TestCase):
                 ],
                 catch_exceptions=False,
             )
+
             onnx_model_f.seek(0)
             onnx_model = ModelProto()
             onnx_model.ParseFromString(onnx_model_f.read())

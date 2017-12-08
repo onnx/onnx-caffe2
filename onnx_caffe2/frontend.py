@@ -231,10 +231,11 @@ class Caffe2Frontend(object):
             ))
             w = reshaped_w
 
+        gemm_y_output = dummy_name() if 'axis' in args else y
         nodes.append(helper.make_node(
             'Gemm',
             inputs=[x, w, b],
-            outputs=[y],
+            outputs=[gemm_y_output],
             name=op_def.name,
             transB=1,
             broadcast=1,
@@ -244,7 +245,7 @@ class Caffe2Frontend(object):
             axis = args['axis'].i
             nodes.append(helper.make_node(
                 'Reshape',
-                inputs=[y],
+                inputs=[gemm_y_output],
                 outputs=[y],
                 shape=x_shape[:axis] + [-1],
             ))

@@ -36,11 +36,13 @@ class TestCaffe2Basic(TestCase):
         Y_ref = np.clip(X, 0, np.inf)
 
         node_def = make_node(
-            "Relu", ["X"], ["X"], consumed_inputs=[1])
+            "Relu", ["X"], ["Y"], consumed_inputs=[1])
         output = c2.run_node(
             node_def, {"X": X})
         np.testing.assert_almost_equal(output.X, Y_ref)
 
+        node_def = make_node(
+            "Relu", ["X"], ["Y"], consumed_inputs=[1])
         graph_def = make_graph(
             [node_def],
             name="test",
@@ -76,10 +78,10 @@ class TestCaffe2Basic(TestCase):
         graph_def = make_graph(
             [make_node("Add", ["X", "Y"], ["Z0"]),
              make_node("Cast", ["Z0"], ["Z"], to="float"),
-             make_node("Mul", ["Z", "weight"], ["W"]),
-             make_node("Tanh", ["W"], ["W"]),
-             make_node("Sigmoid", ["W"], ["W"]),
-             make_node("Scale", ["W"], ["W"], scale=-1.0)],
+             make_node("Mul", ["Z", "weight"], ["W0"]),
+             make_node("Tanh", ["W0"], ["W1"]),
+             make_node("Sigmoid", ["W1"], ["W2"]),
+             make_node("Scale", ["W2"], ["W3"], scale=-1.0)],
             name="test_initializer",
             inputs=[
                 make_tensor_value_info("X", onnx.TensorProto.FLOAT, (2, 2)),
@@ -87,7 +89,7 @@ class TestCaffe2Basic(TestCase):
                 make_tensor_value_info("weight", onnx.TensorProto.FLOAT, (2, 2)),
             ],
             outputs=[
-                make_tensor_value_info("W", onnx.TensorProto.FLOAT, (2, 2))
+                make_tensor_value_info("W3", onnx.TensorProto.FLOAT, (2, 2))
             ],
             initializer=[make_tensor("weight",
                                      onnx.TensorProto.FLOAT,
@@ -101,7 +103,7 @@ class TestCaffe2Basic(TestCase):
         W_ref = -sigmoid(np.tanh((X + Y) * weight))
         c2_rep = c2.prepare(make_model(graph_def))
         output = c2_rep.run({"X": X, "Y": Y})
-        np.testing.assert_almost_equal(output["W"], W_ref)
+        np.testing.assert_almost_equal(output["W3"], W_ref)
 
     def test_gemm(self):
         # simple
