@@ -3,7 +3,6 @@ from __future__ import division
 from __future__ import print_function
 
 import json
-import subprocess
 import tempfile
 import textwrap
 
@@ -198,8 +197,6 @@ class TestConversion(TestCase):
                 ],
                 catch_exceptions=False,
             )
-
-            subprocess.check_call(['check-model', onnx_model_f.name])
 
             onnx_model_f.seek(0)
             onnx_model = ModelProto()
