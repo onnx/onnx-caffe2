@@ -2,5 +2,6 @@
 .cache/
 .coverage
 .eggs/
+build/
 onnx_caffe2.egg-info/
 onnx_caffe2/version.py
