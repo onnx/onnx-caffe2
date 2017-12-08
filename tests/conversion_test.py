@@ -5,6 +5,7 @@ from __future__ import print_function
 import json
 import tempfile
 import textwrap
+import traceback
 
 from caffe2.proto import caffe2_pb2
 from caffe2.python import brew, core
@@ -31,7 +32,7 @@ class TestConversion(TestCase):
         exc_info: {}
         '''.format(result.output,
                    result.exception,
-                   result.exc_info)))
+                   traceback.format_exception(*result.exc_info))))
         return result
 
     def test_caffe2_to_onnx(self):
@@ -128,10 +129,10 @@ class TestConversion(TestCase):
 
         caffe2_init_net = caffe2_pb2.NetDef()
         caffe2_init_net.ParseFromString(init_net_output.read())
-        self.assertEqual(len(caffe2_init_net.op), 2)
+        self.assertEqual(len(caffe2_init_net.op), 1)
         self.assertEqual(set(sum([list(init_op.output)
                                   for init_op in caffe2_init_net.op], [])),
-                         {'W', 'X'})
+                         {'W'})
 
     def test_convert_end2end(self):
         predict_net_f = tempfile.NamedTemporaryFile()

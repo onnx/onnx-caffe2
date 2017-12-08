@@ -493,7 +493,8 @@ class Caffe2Frontend(object):
                 assert re.match('GivenTensor.*Fill', op.type)
                 assert len(op.output) == 1
                 op.output[0] = ssa_name(op.output[0], 0)
-            assert len(init_net.external_input) == 0
+            init_net.external_input[:] = [ssa_name(name, 0)
+                                          for name in init_net.external_input]
             init_net.external_output[:] = [ssa_name(name, 0)
                                            for name in init_net.external_output]
         if value_info:

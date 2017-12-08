@@ -9,6 +9,7 @@ add_executable(optimize-onnx
             assertions.cpp
             export.cpp
             import.cpp
+            optimize.cpp
             interned_strings.cpp
             onnx.pb.cc
 )

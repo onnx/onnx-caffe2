@@ -12,6 +12,7 @@ from tests.test_utils import TestCase
 
 class TestCaffe2Basic(TestCase):
     def test_dummy_name(self):
+        dummy_name([])
         names_1 = [dummy_name() for _ in range(3)]
         dummy_name([])
         names_2 = [dummy_name() for _ in range(3)]
