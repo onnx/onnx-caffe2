@@ -588,7 +588,7 @@ class Caffe2Backend(Backend):
         init_net, predict_net = cls._onnx_model_to_caffe2_net(model, device, opset_version, False)
 
         uninitialized = list(set(x for x in init_net.external_input if x not in initialized) |
-                             set(x for x in predict_net.external_input if x not in init_net.external_output))
+                             set(x for x in predict_net.external_input if (x not in init_net.external_output) and (x not in initialized)))
 
         retval = Caffe2Rep(init_net, predict_net, ws, uninitialized)
         return retval
@@ -720,7 +720,7 @@ class Caffe2Backend(Backend):
         predict_net.name = onnx_model.graph.name + '_predict'
 
         if include_initializers:
-            init_net.op.extend(cls._create_tensor_filling_op(tp) for tp in init_model.graph.initializer)
+            init_net.op.extend(cls._create_tensor_filling_op(tp) for tp in onnx_model.graph.initializer)
 
         dummy_name(cls._all_names_in_graph(init_model.graph) | cls._all_names_in_graph(predict_model.graph))
 
