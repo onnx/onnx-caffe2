@@ -218,7 +218,8 @@ std::unique_ptr<Graph> graphProtoToGraph(const onnx::GraphProto& gp) {
     g->appendNode(n);
     for (int j = 0; j < np.output_size(); j++) {
       auto out = n->outputs()[j];
-      // we don't know the type here, so that's done in a later pass
+      // we don't know the real type here, so that's done in a later pass
+      out->setElemType(onnx::TensorProto_DataType_UNDEFINED);
       out->setUniqueName(np.output(j));
       value_by_name_of[np.output(j)] = out;
     }
