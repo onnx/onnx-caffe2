@@ -106,7 +106,7 @@ std::shared_ptr<Graph> split_init_and_predict(std::shared_ptr<Graph> g, bool ini
     // Remove outputs that belong to the predict net.
     for (auto i = g->outputs().size(); i--;) {
       if (value_belongs_to_predict_net(g->outputs()[i])) {
-        g->return_node()->removeInput(0);
+        g->return_node()->removeInput(i);
       }
     }
 

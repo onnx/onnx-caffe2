@@ -588,10 +588,9 @@ class Caffe2Backend(Backend):
             device_option,
         )
 
-        init_net, predict_net = cls._onnx_model_to_caffe2_net(model, device, opset_version, False)
+        uninitialized = [value_info.name for value_info in model.graph.input if value_info.name not in initialized]
 
-        uninitialized = list(set(x for x in init_net.external_input if x not in initialized) |
-                             set(x for x in predict_net.external_input if (x not in init_net.external_output) and (x not in initialized)))
+        init_net, predict_net = cls._onnx_model_to_caffe2_net(model, device, opset_version, False)
 
         retval = Caffe2Rep(init_net, predict_net, ws, uninitialized)
         return retval
