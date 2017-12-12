@@ -99,7 +99,7 @@ int main(int argc, char** argv) {
       std::cout << buffer.str();
     }
   } else {
-    g = onnx::optimization::optimize(g, init, predict);
+    onnx::optimization::optimize(g, init, predict);
     onnx::optimization::encodeGraph(&mp_out, g);
 
     std::string out;
