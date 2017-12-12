@@ -20,6 +20,79 @@ bool is_pure_operator(Node * n) {
   return true;
 }
 
+bool is_nop_transpose(const std::vector<int64_t> & perm) {
+  for (size_t i = 0; i < perm.size(); i++)
+    if (perm[i] != i)
+      return false;
+  return true;
+}
+
+// returns a vector `ret` such that transposing by `ret` is equivalent
+// to transposing by `t1` and then by `t2`
+std::vector<int64_t> compose_transposes(const std::vector<int64_t> & t1,
+                                        const std::vector<int64_t> & t2) {
+  JIT_ASSERT(t1.size() == t2.size());
+  std::vector<int64_t> ret;
+  for (size_t i = 0; i < t1.size(); i++) {
+    JIT_ASSERT(   t1[i]  < t2.size());
+    JIT_ASSERT(t2[t1[i]] < t2.size());
+    ret.push_back(t2[t1[i]]);
+  }
+  return ret;
+}
+
+void fuse_consecutive_transposes(std::shared_ptr<Graph>& g) {
+  for (auto it = g->begin(); it != g->end(); ++it) {
+    auto* n = *it;
+
+    if (n->kind() == kTranspose && n->input()->node()->kind() == kTranspose) {
+      auto origInput = n->input();
+      n->is_(kperm, compose_transposes(origInput->node()->is(kperm), n->is(kperm)));
+      n->replaceInput(0, origInput->node()->input());
+      if (origInput->uses().size() == 0) {
+        origInput->node()->destroy();
+      }
+      continue;
+    }
+  }
+}
+
+void eliminate_nop_transpose(std::shared_ptr<Graph>& graph) {
+  for (auto it = graph->begin(); it != graph->end(); ++it) {
+    auto* n = *it;
+
+    if (n->kind() == kTranspose) {
+      if (is_nop_transpose(n->is(kperm))) {
+        n->replaceAllUsesWith(n->input()->node());
+        it.destroyCurrent();
+        continue;
+      }
+    }
+  }
+}
+
+void fuse_transpose_into_gemm(std::shared_ptr<Graph>& graph) {
+  static const std::vector<int64_t> simple_trans_perm({1,0});
+
+  for (auto it = graph->begin(); it != graph->end(); ++it) {
+    auto* n = *it;
+
+    if (n->kind() == kGemm) {
+      for (size_t i : {0,1}) {
+        auto inp = n->inputs()[i];
+        auto trans = i == 0 ? ktransA : ktransB;
+        if (inp->node()->kind() == kTranspose && inp->node()->is(kperm) == simple_trans_perm) {
+          n->replaceInput(i, inp->node()->input());
+          n->i_(trans, n->hasAttribute(trans) ? !n->i(trans) : 1);
+          if (inp->uses().size() == 0) {
+            inp->node()->destroy();
+          }
+        }
+      }
+    }
+  }
+}
+
 // Split the graph into 'init' and 'predict' nets. This is kind of
 // like constant folding, except that rather than actually execute the
 // constant computations, we simply split them out into a separate
@@ -39,7 +112,7 @@ bool is_pure_operator(Node * n) {
 // value provided for them vary only between invocations of the init
 // net, and are constant across runs of the predict net.
 //
-std::shared_ptr<Graph> split_init_and_predict(std::shared_ptr<Graph> g, bool init, bool predict) {
+void split_init_and_predict(std::shared_ptr<Graph> g, bool init, bool predict) {
   // The first step is to identify which Values are reachable from
   // either of
   //   - inputs without corresponding initializers
@@ -151,12 +224,13 @@ std::shared_ptr<Graph> split_init_and_predict(std::shared_ptr<Graph> g, bool ini
       }
     }
   }
-
-  return g;
 }
 
-std::shared_ptr<Graph> optimize(std::shared_ptr<Graph> g, bool init, bool predict) {
-  return split_init_and_predict(g, init, predict);
+void optimize(std::shared_ptr<Graph> g, bool init, bool predict) {
+  fuse_consecutive_transposes(g);
+  eliminate_nop_transpose(g);
+  fuse_transpose_into_gemm(g);
+  split_init_and_predict(g, init, predict);
 }
 
 }}
