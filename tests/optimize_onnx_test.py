@@ -15,14 +15,14 @@ import numpy as np
 
 import onnx
 from onnx import helper, ModelProto, TensorProto
-from onnx.backend.test.runner import Runner as TestRunner
+from onnx.backend.test.runner import Runner
 import onnx_caffe2.backend as c2
 
 from tests.test_utils import TestCase
 
 class TestRoundtrip(TestCase):
     def _roundtrip(self, model_name):
-        model_dir = TestRunner(c2)._prepare_model_data(
+        model_dir = Runner(c2)._prepare_model_data(
             namedtuple('dummy', ['model_name'])(model_name))
 
         pb_path = os.path.join(model_dir, 'model.pb')
