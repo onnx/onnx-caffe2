@@ -13,6 +13,7 @@ from subprocess import Popen, PIPE
 
 import caffe2
 from caffe2.python import core, workspace
+from caffe2.python.model_helper import ModelHelper
 from caffe2.proto import caffe2_pb2
 import caffe2.python.utils
 import numpy as np
@@ -164,7 +165,7 @@ class Caffe2Backend(Backend):
     # so this interface MAY make BC-breaking changes.  Specify an
     # opset_version if you don't want this to version.
     @classmethod
-    def run_node(cls, node, inputs, device='CPU', opset_version=_known_opset_version):
+    def run_node(cls, model_helper, node, inputs, device='CPU', opset_version=_known_opset_version):
         super(Caffe2Backend, cls).run_node(node, inputs, device)
 
         device_option = get_device_option(Device(device))
@@ -179,7 +180,7 @@ class Caffe2Backend(Backend):
                     workspace.FeedBlob(key, value)
 
             cls._inplace_rewrite([node])
-            ops = cls._onnx_node_to_caffe2_op(node, opset_version or cls._known_opset_version)
+            ops = cls._onnx_node_to_caffe2_op(model_helper, node, opset_version or cls._known_opset_version)
             for op in ops:
                 op.device_option.CopyFrom(device_option)
             workspace.RunOperatorsOnce(ops)
@@ -240,12 +241,12 @@ class Caffe2Backend(Backend):
         return c2_op
 
     @classmethod
-    def _create_constant(cls, n, opset_version):
+    def _create_constant(cls, model_helper, n, opset_version):
         assert len(n.outputs) == 1
         return cls._create_tensor_filling_op(n.attrs["value"], n.outputs[0])
 
     @classmethod
-    def _create_gather(cls, n, opset_version):
+    def _create_gather(cls, model_helper, n, opset_version):
         (A, B) = n.inputs
         (Y, ) = n.outputs
         axis = n.attrs.get('axis', 0)
@@ -259,7 +260,7 @@ class Caffe2Backend(Backend):
             'whereas axis is ' + str(axis))
 
     @classmethod
-    def _create_gemm(cls, n, opset_version):
+    def _create_gemm(cls, model_helper, n, opset_version):
         (A, B, C) = n.inputs
         (Y,) = n.outputs
         alpha = n.attrs.get('alpha', 1.)
@@ -297,7 +298,7 @@ class Caffe2Backend(Backend):
         return ops
 
     @classmethod
-    def _create_pad(cls, n, opset_version):
+    def _create_pad(cls, model_helper, n, opset_version):
         if opset_version < 2:
             pads = n.attrs['paddings']
         else:
@@ -307,20 +308,17 @@ class Caffe2Backend(Backend):
                 set(pads[:2] + pads[4:6]) == {0}):
             raise ValueError('Caffe2 only supports padding 2D Tensor, whereas padding is ' + str(pads))
         pads[:] = pads[2:4] + pads[6:8]
-        return cls._common_onnx_node_to_caffe2_op(n, opset_version)
+        return cls._common_onnx_node_to_caffe2_op(model_helper, n, opset_version)
 
     @classmethod
-    def _create_concat(cls, n, opset_version):
+    def _create_concat(cls, model_helper, n, opset_version):
         # TODO: Caffe2 Concat has an extra output. It should be only
         # used when doing training, so we should change Caffe2 to allow
         # 1 output.
-        op = cls._common_onnx_node_to_caffe2_op(n, opset_version)
-        assert len(op.output) == 1
-        op.output.append(dummy_name())
-        return op
+        model_helper.net.Concat(n.inputs, n.outputs + [dummy_name()])
 
     @classmethod
-    def _create_optimized_rnn(cls, n, opset_version):
+    def _create_optimized_rnn(cls, model_helper, n, opset_version):
         # TODO: we cheat and rely on the fact that ONNX weight layout matches
         # CuDNN's. Properly we should extract the weight tensor and invoke
         # RecurrentParamSet exposed by C2
@@ -344,8 +342,8 @@ class Caffe2Backend(Backend):
         return op
 
     @classmethod
-    def _create_slice(cls, n, opset_version):
-        op = cls._common_onnx_node_to_caffe2_op(n, opset_version)
+    def _create_slice(cls, model_helper, n, opset_version):
+        op = cls._common_onnx_node_to_caffe2_op(model_helper, n, opset_version)
         args = {arg.name: arg for arg in op.arg}
         starts_vals = np.array(
             args.pop('starts').ints, dtype=np.int64).tolist()
@@ -483,7 +481,7 @@ class Caffe2Backend(Backend):
     # differently.
 
     @classmethod
-    def _create_conv_pool_op_base(cls, n, opset_version):
+    def _create_conv_pool_op_base(cls, model_helper, n, opset_version):
         if n.op_type.startswith('Global'):
             n.attrs['global_pooling'] = 1
 
@@ -497,11 +495,11 @@ class Caffe2Backend(Backend):
                 # Caffe2 requires pads to be twice the size of kernels.
                 n.attrs['pads'] = pads * 2
 
-        return cls._common_onnx_node_to_caffe2_op(n, opset_version)
+        return cls._common_onnx_node_to_caffe2_op(model_helper, n, opset_version)
 
     @classmethod
-    def _create_reshape(cls, n, opset_version):
-        c2_op = cls._common_onnx_node_to_caffe2_op(n, opset_version)
+    def _create_reshape(cls, model_helper, n, opset_version):
+        c2_op = cls._common_onnx_node_to_caffe2_op(model_helper, n, opset_version)
         # Caffe2 has an extra output
         c2_op.output.append(dummy_name())
         return c2_op
@@ -595,18 +593,18 @@ class Caffe2Backend(Backend):
 
     @classmethod
     # TODO: This method needs a refactor for clarity
-    def _onnx_node_to_caffe2_op(cls, node_def, opset_version):
+    def _onnx_node_to_caffe2_op(cls, model_helper, node_def, opset_version):
         if node_def.op_type in cls._special_operators:
             translator = getattr(cls, cls._special_operators[node_def.op_type])
         else:
             translator = cls._common_onnx_node_to_caffe2_op
-        ops = translator(OnnxNode(node_def), opset_version)
+        ops = translator(model_helper, OnnxNode(node_def), opset_version)
         if not isinstance(ops, collections.Iterable):
             ops = [ops]
         return ops
 
     @classmethod
-    def _common_onnx_node_to_caffe2_op(cls, onnx_node, opset_version):
+    def _common_onnx_node_to_caffe2_op(cls, model_helper, onnx_node, opset_version):
         """
         This translator performs the basic translation of ONNX nodes into
         Caffe2 operators.  Besides doing a straightforward marshalling from
@@ -619,6 +617,7 @@ class Caffe2Backend(Backend):
         If you're writing a custom translator, consider calling this first,
         and then fixing things up further.
         """
+
         c2_op = caffe2_pb2.OperatorDef()
 
         c2_op.input.extend(onnx_node.inputs)
@@ -713,11 +712,12 @@ class Caffe2Backend(Backend):
         predict_model.ParseFromString(cls.optimize_onnx(onnx_model.SerializeToString(), predict=True))
         cls._inplace_rewrite(predict_model.graph)
 
-        init_net = caffe2_pb2.NetDef()
-        predict_net = caffe2_pb2.NetDef()
+        model_helper = ModelHelper(
+            name=onnx_model.graph.name,
+        )
 
-        init_net.name = onnx_model.graph.name + '_init'
-        predict_net.name = onnx_model.graph.name + '_predict'
+        init_net = model_helper.InitProto()
+        predict_net = model_helper.Proto()
 
         if include_initializers:
             init_net.op.extend(cls._create_tensor_filling_op(tp) for tp in onnx_model.graph.initializer)
@@ -727,7 +727,8 @@ class Caffe2Backend(Backend):
         for net, model in ( (init_net, init_model), (predict_net, predict_model) ):
             net.device_option.CopyFrom(device_option)
             for node in model.graph.node:
-                net.op.extend(cls._onnx_node_to_caffe2_op(node, opset_version))
+                ops = cls._onnx_node_to_caffe2_op(model_helper, node, opset_version)
+                net.op.extend(x for x in ops if x is not None)
             net.external_output.extend(
                 value_info.name for value_info in model.graph.output)
             net.external_input.extend(
