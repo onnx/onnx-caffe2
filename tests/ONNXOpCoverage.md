@@ -57,7 +57,7 @@ This doc keeps tracking why operators are not covered by the testcases.
 |Or||||
 |PRelu|Yes|OK|OK|
 |Pad|Yes|OK|OK|
-|Pow||||
+|Pow||OK|Only accept exponent as argument, not an input|
 |RNN||||
 |RandomNormal||||
 |RandomNormalLike||||
