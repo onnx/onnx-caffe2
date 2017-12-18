@@ -29,7 +29,6 @@ pip install onnx-caffe2
 
 onnx-caffe2 uses [pytest](https://docs.pytest.org) as test driver. In order to run tests, first you need to install pytest:
 
-Testing coverage issues/status: https://github.com/onnx/onnx-caffe2/blob/master/tests/ONNXOpCoverage.md
 
 ```
 pip install pytest-cov
@@ -42,6 +41,8 @@ pytest
 ```
 
 to run tests.
+
+Testing coverage issues/status: https://github.com/onnx/onnx-caffe2/blob/master/tests/ONNXOpCoverage.md
 
 # Development
 
