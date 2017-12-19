@@ -45,7 +45,7 @@ class TestRoundtrip(TestCase):
     # testing just to be sure that we no-op instead of breaking on an
     # older IR version.
     def test_squeezenet_v1(self):
-        self._roundtrip('squeezenet')
+        self._roundtrip('squeezenet-ir-version-1')
 
 class TestOptimize(TestCase):
     def _optimized(self, graph):

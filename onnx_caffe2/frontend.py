@@ -136,6 +136,9 @@ class Caffe2Frontend(object):
         node = cls._common_caffe2_op_to_onnx_node(op_def, shapes)
         if len(node.output) == 2:
             del node.output[1]
+        explicit_axis = any(arg.name == 'axis' for arg in op_def.arg)
+        if not explicit_axis:
+            node.attribute.extend([helper.make_attribute('axis', 1)])
         return node
 
     @classmethod
