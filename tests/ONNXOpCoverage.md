@@ -76,7 +76,7 @@ This doc keeps tracking why operators are not covered by the testcases.
 |ReduceSumSquare||||
 |Relu|Yes|OK|OK|
 |Reshape|Yes|OK|OK|
-|Selu||||
+|Selu|Yes|OK|OK|
 |Sigmoid|Yes|OK|OK|
 |Slice|Yes|OK|OK|
 |Softmax|Yes|OK|OK|
