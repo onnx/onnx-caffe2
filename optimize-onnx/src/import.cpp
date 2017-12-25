@@ -226,8 +226,8 @@ std::unique_ptr<Graph> graphProtoToGraph(const onnx::GraphProto& gp) {
     convertAttributes(np, n);
     std::vector<std::string> inputs;
     inputs.reserve(np.input_size());
-    for (int i = 0; i < np.input_size(); i++) {
-      inputs.push_back(np.input(i));
+    for (int j = 0; j < np.input_size(); j++) {
+      inputs.push_back(np.input(j));
     }
     inputs_by_node[n] = inputs;
     if (np.has_doc_string()) {

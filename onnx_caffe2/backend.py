@@ -27,6 +27,7 @@ from onnx_caffe2.backend_rep import Caffe2Rep
 from onnx_caffe2.helper import dummy_name
 
 import warnings
+import onnx.optimization.cpp2py as C
 
 
 def get_device_option(device):
@@ -132,6 +133,7 @@ class Caffe2Backend(Backend):
         'MatMul':                'BatchMatMul',
         'Upsample':              'ResizeNearest',
         'Equal':                 'EQ',
+        'Identity':              'Copy',
     }
 
     _global_renamed_attrs = {'kernel_shape': 'kernels'}
@@ -524,24 +526,7 @@ class Caffe2Backend(Backend):
 
     @staticmethod
     def optimize_onnx(input, init=False, predict=False):
-        # this is where the binary is located when onnx-caffe2 has been installed
-        executable = os.path.join(os.path.realpath(os.path.dirname(__file__)),
-                                  '..', '..', '..', '..', 'bin', 'optimize-onnx')
-        # if it's not there, we are likely in development mode and can
-        # just look for it in PATH
-        if not os.path.isfile(executable):
-            executable = 'optimize-onnx'
-        cmd = [executable]
-        if init and not predict:
-            cmd.append('init')
-        elif predict and not init:
-            cmd.append('predict')
-        elif init and predict:
-            raise Exception("optimize_onnx called with both init and predict set")
-        proc = Popen(cmd, stdin=PIPE, stdout=PIPE, stderr=PIPE)
-        stdout, stderr = proc.communicate(input)
-        assert proc.returncode == 0
-        return stdout
+        return C.optimize(input, init, predict)
 
     @classmethod
     def prepare(cls, model, device='CPU', **kwargs):
@@ -708,11 +693,11 @@ class Caffe2Backend(Backend):
         device_option = get_device_option(Device(device))
 
         init_model = ModelProto()
-        init_model.ParseFromString(cls.optimize_onnx(onnx_model.SerializeToString(), init=True))
+        init_model.ParseFromString(cls.optimize_onnx(onnx_model.SerializeToString(), init=True, predict=False))
         cls._inplace_rewrite(init_model.graph)
 
         predict_model = ModelProto()
-        predict_model.ParseFromString(cls.optimize_onnx(onnx_model.SerializeToString(), predict=True))
+        predict_model.ParseFromString(cls.optimize_onnx(onnx_model.SerializeToString(), init=False, predict=True))
         cls._inplace_rewrite(predict_model.graph)
 
         init_net = caffe2_pb2.NetDef()
@@ -737,7 +722,7 @@ class Caffe2Backend(Backend):
 
         return init_net, predict_net
 
-    # wrapper for backwards compatability
+    # wrapper for backwards compatibility
     @classmethod
     def onnx_graph_to_caffe2_net(cls, model, device="CPU", opset_version=_known_opset_version):
         return cls._onnx_model_to_caffe2_net(model, device=device, opset_version=opset_version, include_initializers=True)

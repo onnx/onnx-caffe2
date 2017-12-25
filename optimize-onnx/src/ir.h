@@ -572,9 +572,10 @@ public:
   Graph()
   : next_unique_(0)
   , new_node_stage_(0)
+  , output_(initOutput(create(kReturn, 0)))
+  , input_(create(kParam, 0))
   , has_name_(false)
-  , has_doc_string_(false)
-  , output_(initOutput(create(kReturn, 0))), input_(create(kParam, 0)) {}
+  , has_doc_string_(false) {}
 
   bool has_doc_string() {
     return has_doc_string_;
@@ -757,8 +758,8 @@ inline Value::Value(Node * node_, size_t offset_)
 : node_(node_),
   offset_(offset_),
   unique_(node_->graph_->next_unique_++),
-  has_name_(true),
-  stage_(node_->graph_->new_node_stage_) {
+  stage_(node_->graph_->new_node_stage_),
+  has_name_(true) {
   node_->graph_->all_values.emplace(this);
 }
 
@@ -782,9 +783,9 @@ inline void Value::replaceAllUsesWith(Value * newValue) {
 inline Node::Node(Graph * graph_, NodeKind kind_) :
   kind_(kind_),
   graph_(graph_),
+  stage_(graph_->new_node_stage_),
   has_name_(false),
-  has_doc_string_(false),
-  stage_(graph_->new_node_stage_) {
+  has_doc_string_(false) {
   graph_->all_nodes.emplace(this);
 }
 

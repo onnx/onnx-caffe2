@@ -3,7 +3,7 @@
 #include "interned_strings.h"
 #include "assertions.h"
 
-#include "onnx.pb.h"
+#include "onnx/onnx.pb.h"
 
 #include <memory>
 #include <iostream>
