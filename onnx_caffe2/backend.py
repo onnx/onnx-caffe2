@@ -12,7 +12,8 @@ import collections
 from subprocess import Popen, PIPE
 
 import caffe2
-from caffe2.python import core, workspace
+from caffe2.python import core, workspace, rnn_cell
+from caffe2.python.model_helper import ModelHelper
 from caffe2.proto import caffe2_pb2
 import caffe2.python.utils
 import numpy as np
@@ -99,6 +100,9 @@ class OnnxNode(object):
         self.outputs = list(node.output)
 
 
+Caffe2Ops = collections.namedtuple('Caffe2Ops', ['ops', 'init_ops', 'interface_blobs'])
+
+
 class Caffe2Backend(Backend):
 
     # The greatest version of the ONNX operator set which we are aware of.
@@ -158,6 +162,7 @@ class Caffe2Backend(Backend):
         'Concat': '_create_concat',
         'OptimizedRNN': '_create_optimized_rnn',
         'Slice': '_create_slice',
+        'LSTM': '_create_lstm',
     }
 
     # NB: By default, you will use the LATEST definition of the operator,
@@ -179,7 +184,9 @@ class Caffe2Backend(Backend):
                     workspace.FeedBlob(key, value)
 
             cls._inplace_rewrite([node])
-            ops = cls._onnx_node_to_caffe2_op(node, opset_version or cls._known_opset_version)
+            init_ops, ops, _ = cls._onnx_node_to_caffe2_op(
+                None, None, node, opset_version or cls._known_opset_version)
+            ops = init_ops + ops
             for op in ops:
                 op.device_option.CopyFrom(device_option)
             workspace.RunOperatorsOnce(ops)
@@ -240,12 +247,12 @@ class Caffe2Backend(Backend):
         return c2_op
 
     @classmethod
-    def _create_constant(cls, n, opset_version):
+    def _create_constant(cls, init_model, pred_model, n, opset_version):
         assert len(n.outputs) == 1
         return cls._create_tensor_filling_op(n.attrs["value"], n.outputs[0])
 
     @classmethod
-    def _create_gather(cls, n, opset_version):
+    def _create_gather(cls, init_model, pred_model, n, opset_version):
         (A, B) = n.inputs
         (Y, ) = n.outputs
         axis = n.attrs.get('axis', 0)
@@ -259,7 +266,7 @@ class Caffe2Backend(Backend):
             'whereas axis is ' + str(axis))
 
     @classmethod
-    def _create_gemm(cls, n, opset_version):
+    def _create_gemm(cls, init_model, pred_model, n, opset_version):
         (A, B, C) = n.inputs
         (Y,) = n.outputs
         alpha = n.attrs.get('alpha', 1.)
@@ -297,7 +304,88 @@ class Caffe2Backend(Backend):
         return ops
 
     @classmethod
-    def _create_pad(cls, n, opset_version):
+    def _create_lstm(cls, init_model, pred_model, n, opset_version):
+        assert init_model is not None, "cannot convert LSTMs through this codepath"
+        assert pred_model is not None, "cannot convert LSTMs through this codepath"
+
+        attrs = dict(n.attrs)
+        hidden_size = attrs.pop('hidden_size')
+        assert not attrs, "unsupported LSTM attributes: " + attrs.keys()
+
+        input_blob, W, R, B, sequence_lens, initial_h, initial_c = n.inputs
+
+        # ad-hoc, informally-specified, bug-ridden, slow
+        # implementation of shape inference
+        input_size = None
+
+        # if the weight matrices are directly provided as
+        # initializers, their dimensions should be available in the
+        # init net model.
+        for x in init_model.graph.input:
+            if x.name == W:
+                input_size = x.type.tensor_type.shape.dim[1].dim_value
+
+        # otherwise, assume that the input_blob is either a direct
+        # graph input, or another LSTM. This matches the pattern
+        # produced by exporting from pytorch (where the weight
+        # matrices are unusable for this purpose due to reshaping
+        # operations that lose shape information).
+        for x in pred_model.graph.input:
+            if x.name == input_blob:
+                input_size = x.type.tensor_type.shape.dim[2].dim_value
+        for x in map(OnnxNode, pred_model.graph.node):
+            if x.op_type == n.op_type and x.outputs[0] == input_blob:
+                input_size = x.attrs['hidden_size']
+
+        assert input_size is not None, "best-effort shape inference for LSTM input failed"
+
+        name = dummy_name()
+        init_net = core.Net("init-net")
+        pred_mh = ModelHelper()
+
+        hidden_t_all, hidden_t_last, _, _, params = rnn_cell.LSTM(
+            pred_mh,
+            input_blob,
+            sequence_lens,
+            [initial_h, initial_c],
+            input_size,
+            hidden_size,
+            name,
+            forward_only=True,
+            return_params=True
+        )
+
+        # input and recurrence biases are squashed together in onnx but not in caffe2
+        Bi = name + "_bias_i2h"
+        Br = name + "_bias_gates"
+        init_net.Slice(B, Bi, starts=[0*hidden_size], ends=[4*hidden_size])
+        init_net.Slice(B, Br, starts=[4*hidden_size], ends=[8*hidden_size])
+
+        # caffe2 has a different order from onnx. We need to rearrange
+        #   i o f c -> i f o c
+        reforms = ((W,  params['input']    ['weights'], [(0, input_size)]),
+                   (R,  params['recurrent']['weights'], [(0, hidden_size)]),
+                   (Bi, params['input']    ['biases'],  []),
+                   (Br, params['recurrent']['biases'],  []))
+        for name_from, name_to, extra_dims in reforms:
+            xi, xo, xf, xc = [name_from + suffix for suffix in ("_i", "_o", "_f", "_c")]
+            for i, x in enumerate([xi, xo, xf, xc]):
+                dim0 = i * hidden_size, (i+1) * hidden_size
+                starts, ends = zip(dim0, *extra_dims)
+                init_net.Slice(name_from, x, starts=starts, ends=ends)
+            init_net.Concat([xi, xf, xo, xc], [name_to, dummy_name()], axis=0)
+
+        pred_mh.net = pred_mh.net.Clone(
+            "dummy-clone-net",
+            blob_remap={ hidden_t_all: n.outputs[0], hidden_t_last: n.outputs[1] }
+        )
+
+        return Caffe2Ops(list(pred_mh.Proto().op),
+                         list(init_net.Proto().op),
+                         list(pred_mh.Proto().external_input))
+
+    @classmethod
+    def _create_pad(cls, init_model, pred_model, n, opset_version):
         if opset_version < 2:
             pads = n.attrs['paddings']
         else:
@@ -310,20 +398,20 @@ class Caffe2Backend(Backend):
         if min(pads) < 0:
             raise ValueError('ONNX does not support negative pads in Pad, but get {}.'.format(pads))
         pads[:] = pads[2:4] + pads[6:8]
-        return cls._common_onnx_node_to_caffe2_op(n, opset_version)
+        return cls._common_onnx_node_to_caffe2_op(init_model, pred_model, n, opset_version)
 
     @classmethod
-    def _create_concat(cls, n, opset_version):
+    def _create_concat(cls, init_model, pred_model, n, opset_version):
         # TODO: Caffe2 Concat has an extra output. It should be only
         # used when doing training, so we should change Caffe2 to allow
         # 1 output.
-        op = cls._common_onnx_node_to_caffe2_op(n, opset_version)
+        op = cls._common_onnx_node_to_caffe2_op(init_model, pred_model, n, opset_version)
         assert len(op.output) == 1
         op.output.append(dummy_name())
         return op
 
     @classmethod
-    def _create_optimized_rnn(cls, n, opset_version):
+    def _create_optimized_rnn(cls, init_model, pred_model, n, opset_version):
         # TODO: we cheat and rely on the fact that ONNX weight layout matches
         # CuDNN's. Properly we should extract the weight tensor and invoke
         # RecurrentParamSet exposed by C2
@@ -347,8 +435,8 @@ class Caffe2Backend(Backend):
         return op
 
     @classmethod
-    def _create_slice(cls, n, opset_version):
-        op = cls._common_onnx_node_to_caffe2_op(n, opset_version)
+    def _create_slice(cls, init_model, pred_model, n, opset_version):
+        op = cls._common_onnx_node_to_caffe2_op(init_model, pred_model, n, opset_version)
         args = {arg.name: arg for arg in op.arg}
         starts_vals = np.array(
             args.pop('starts').ints, dtype=np.int64).tolist()
@@ -486,7 +574,7 @@ class Caffe2Backend(Backend):
     # differently.
 
     @classmethod
-    def _create_conv_pool_op_base(cls, n, opset_version):
+    def _create_conv_pool_op_base(cls, init_model, pred_model, n, opset_version):
         if n.op_type.startswith('Global'):
             n.attrs['global_pooling'] = 1
 
@@ -500,11 +588,11 @@ class Caffe2Backend(Backend):
                 # Caffe2 requires pads to be twice the size of kernels.
                 n.attrs['pads'] = pads * 2
 
-        return cls._common_onnx_node_to_caffe2_op(n, opset_version)
+        return cls._common_onnx_node_to_caffe2_op(init_model, pred_model, n, opset_version)
 
     @classmethod
-    def _create_reshape(cls, n, opset_version):
-        c2_op = cls._common_onnx_node_to_caffe2_op(n, opset_version)
+    def _create_reshape(cls, init_model, pred_model, n, opset_version):
+        c2_op = cls._common_onnx_node_to_caffe2_op(init_model, pred_model, n, opset_version)
         # Caffe2 has an extra output
         c2_op.output.append(dummy_name())
         return c2_op
@@ -597,18 +685,20 @@ class Caffe2Backend(Backend):
 
     @classmethod
     # TODO: This method needs a refactor for clarity
-    def _onnx_node_to_caffe2_op(cls, node_def, opset_version):
+    def _onnx_node_to_caffe2_op(cls, init_model, pred_model, node_def, opset_version):
         if node_def.op_type in cls._special_operators:
             translator = getattr(cls, cls._special_operators[node_def.op_type])
         else:
             translator = cls._common_onnx_node_to_caffe2_op
-        ops = translator(OnnxNode(node_def), opset_version)
+        ops = translator(init_model, pred_model, OnnxNode(node_def), opset_version)
+        if isinstance(ops, Caffe2Ops):
+            return ops
         if not isinstance(ops, collections.Iterable):
             ops = [ops]
-        return ops
+        return Caffe2Ops(ops, [], [])
 
     @classmethod
-    def _common_onnx_node_to_caffe2_op(cls, onnx_node, opset_version):
+    def _common_onnx_node_to_caffe2_op(cls, init_model, pred_model, onnx_node, opset_version):
         """
         This translator performs the basic translation of ONNX nodes into
         Caffe2 operators.  Besides doing a straightforward marshalling from
@@ -711,9 +801,9 @@ class Caffe2Backend(Backend):
         init_model.ParseFromString(cls.optimize_onnx(onnx_model.SerializeToString(), init=True))
         cls._inplace_rewrite(init_model.graph)
 
-        predict_model = ModelProto()
-        predict_model.ParseFromString(cls.optimize_onnx(onnx_model.SerializeToString(), predict=True))
-        cls._inplace_rewrite(predict_model.graph)
+        pred_model = ModelProto()
+        pred_model.ParseFromString(cls.optimize_onnx(onnx_model.SerializeToString(), predict=True))
+        cls._inplace_rewrite(pred_model.graph)
 
         init_net = caffe2_pb2.NetDef()
         predict_net = caffe2_pb2.NetDef()
@@ -724,12 +814,16 @@ class Caffe2Backend(Backend):
         if include_initializers:
             init_net.op.extend(cls._create_tensor_filling_op(tp) for tp in onnx_model.graph.initializer)
 
-        dummy_name(cls._all_names_in_graph(init_model.graph) | cls._all_names_in_graph(predict_model.graph))
+        dummy_name(cls._all_names_in_graph(init_model.graph) | cls._all_names_in_graph(pred_model.graph))
 
-        for net, model in ( (init_net, init_model), (predict_net, predict_model) ):
+        for net, model in ( (init_net, init_model), (predict_net, pred_model) ):
             net.device_option.CopyFrom(device_option)
             for node in model.graph.node:
-                net.op.extend(cls._onnx_node_to_caffe2_op(node, opset_version))
+                c2ops = cls._onnx_node_to_caffe2_op(
+                    init_model, pred_model, node, opset_version)
+                init_net.op.extend(c2ops.init_ops)
+                net.op.extend(c2ops.ops)
+                net.external_input.extend(c2ops.interface_blobs)
             net.external_output.extend(
                 value_info.name for value_info in model.graph.output)
             net.external_input.extend(
