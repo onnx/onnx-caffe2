@@ -50,7 +50,7 @@ This doc keeps tracking why operators are not covered by the testcases.
 |MaxPool|Yes|OK|OK|
 |MaxRoiPool||||
 |Mean||||
-|Min||OK|No Support|
+|Min|Yes|OK|OK|
 |Mul|Yes|OK|OK|
 |Neg|Yes|OK|OK|
 |Not||||
