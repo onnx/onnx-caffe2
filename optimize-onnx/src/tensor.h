@@ -1,6 +1,6 @@
 #pragma once
 
-#include "onnx.pb.h"
+#include "onnx/onnx.pb.h"
 
 namespace onnx { namespace optimization {
 
