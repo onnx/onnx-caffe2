@@ -1,6 +1,9 @@
+add_custom_target(create-onnx-dir ALL COMMAND ${CMAKE_COMMAND} -E make_directory onnx)
+
 add_custom_command(
-        OUTPUT onnx.pb.h onnx.pb.cc
-        COMMAND protoc --proto_path=${CMAKE_SOURCE_DIR}/onnx/onnx --cpp_out=. ${CMAKE_SOURCE_DIR}/onnx/onnx/onnx.proto
+        OUTPUT onnx/onnx.pb.h onnx/onnx.pb.cc
+        COMMAND protoc --proto_path=${CMAKE_SOURCE_DIR}/onnx/onnx --cpp_out=onnx ${CMAKE_SOURCE_DIR}/onnx/onnx/onnx.proto
+        DEPENDS create-onnx-dir
         MAIN_DEPENDENCY ${CMAKE_SOURCE_DIR}/onnx/onnx/onnx.proto
 )
 
@@ -11,7 +14,8 @@ add_executable(optimize-onnx
             import.cpp
             optimize.cpp
             interned_strings.cpp
-            onnx.pb.cc
+            onnx/onnx.pb.cc
+            wrapper.cpp
 )
 
 set(CMAKE_CXX_FLAGS "--std=c++11 ${CMAKE_CXX_FLAGS}")
