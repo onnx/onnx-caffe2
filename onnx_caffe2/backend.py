@@ -821,7 +821,7 @@ class Caffe2Backend(Backend):
             for node in model.graph.node:
                 c2ops = cls._onnx_node_to_caffe2_op(
                     init_model, pred_model, node, opset_version)
-                init_net.op.extend(c2ops.init_ops)
+                (init_net if include_initializers else net).op.extend(c2ops.init_ops)
                 net.op.extend(c2ops.ops)
                 net.external_input.extend(c2ops.interface_blobs)
             net.external_output.extend(
