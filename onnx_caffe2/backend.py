@@ -29,6 +29,8 @@ from onnx_caffe2.helper import dummy_name
 
 import warnings
 
+OpSchema = workspace.C.OpSchema
+
 
 def get_device_option(device):
     m = {DeviceType.CPU: caffe2_pb2.CPU,
@@ -684,6 +686,45 @@ class Caffe2Backend(Backend):
         return retval
 
     @classmethod
+    def _caff2_op_type(cls, onnx_op_type, opset_version):
+        broken_version = cls._broken_operators.get(onnx_op_type, float('Inf'))
+        if broken_version <= opset_version:
+            raise ValueError(
+                "Don't know how to translate op {} in ONNX operator set v{} \
+                (I only support prior to v{})".format(
+                    onnx_op_type, opset_version, broken_version))
+
+        c2_op_type = cls._renamed_operators.get(onnx_op_type, onnx_op_type)
+        if not core.IsOperator(c2_op_type):
+            raise ValueError(
+                "Don't know how to translate op {}".format(onnx_op_type))
+        return c2_op_type
+
+    @classmethod
+    def validate(cls, onnx_node, opset_version):
+        onnx_op_type = onnx_node.op_type
+        c2_op_type = cls._caff2_op_type(onnx_op_type, opset_version)
+        c2_schema = OpSchema.get(c2_op_type)
+
+        num_args = len(onnx_node.attrs)
+        if num_args != len(c2_schema.args):
+            raise ValueError(
+                "Number of arguments doesn't match for op: \
+                    {}".format(onnx_op_type))
+
+        num_inputs = len(onnx_node.inputs)
+        if num_inputs > c2_schema.max_input or \
+                num_inputs < c2_schema.min_input:
+            raise ValueError(
+                "Incorrect number of inputs: {}".format(onnx_node.inputs))
+
+        num_outputs = len(onnx_node.outputs)
+        if num_outputs > c2_schema.max_output or \
+                num_outputs < c2_schema.min_output:
+            raise ValueError(
+                "Incorrect number of outputs: {}".format(onnx_node.outputs))
+
+    @classmethod
     # TODO: This method needs a refactor for clarity
     def _onnx_node_to_caffe2_op(cls, init_model, pred_model, node_def, opset_version):
         if node_def.op_type in cls._special_operators:
@@ -711,6 +752,7 @@ class Caffe2Backend(Backend):
         If you're writing a custom translator, consider calling this first,
         and then fixing things up further.
         """
+        cls.validate(onnx_node, opset_version)
         c2_op = caffe2_pb2.OperatorDef()
 
         c2_op.input.extend(onnx_node.inputs)
@@ -718,14 +760,7 @@ class Caffe2Backend(Backend):
         c2_op.name = onnx_node.name
 
         onnx_op_type = onnx_node.op_type
-        broken_version = cls._broken_operators.get(onnx_op_type, float('Inf'))
-        if broken_version <= opset_version:
-            raise ValueError(
-                "Don't know how to translate op {} in ONNX operator set v{} (I only support prior to v{})".format(onnx_op_type, opset_version, broken_version))
-        c2_op.type = cls._renamed_operators.get(onnx_op_type, onnx_op_type)
-        if not core.IsOperator(c2_op.type):
-            raise ValueError(
-                "Don't know how to translate op {}".format(onnx_op_type))
+        c2_op.type = cls._caff2_op_type(onnx_op_type, opset_version)
 
         def kmap(k):
             if (onnx_op_type in cls._per_op_renamed_attrs and
