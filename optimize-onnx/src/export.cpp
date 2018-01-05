@@ -1,7 +1,5 @@
 #include "export.h"
 
-#include <ATen/ATen.h>
-
 namespace onnx { namespace optimization {
 
 namespace {

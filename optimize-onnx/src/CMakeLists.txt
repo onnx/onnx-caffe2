@@ -16,8 +16,6 @@ add_executable(optimize-onnx
 
 set(CMAKE_CXX_FLAGS "--std=c++11 ${CMAKE_CXX_FLAGS}")
 
-target_include_directories(optimize-onnx PUBLIC ${CMAKE_SOURCE_DIR}/aten/src)
 target_include_directories(optimize-onnx PUBLIC ${CMAKE_SOURCE_DIR}/src)
-target_include_directories(optimize-onnx PUBLIC ${CMAKE_BINARY_DIR}/aten/src/ATen)
 target_include_directories(optimize-onnx PUBLIC ${CMAKE_BINARY_DIR}/src)
-target_link_libraries(     optimize-onnx PUBLIC ATen protobuf)
+target_link_libraries(     optimize-onnx PUBLIC protobuf)

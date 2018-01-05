@@ -5,8 +5,6 @@
 #include <memory>
 #include <vector>
 
-#include <ATen/ATen.h>
-
 #include "interned_strings.h"
 #include "tensor.h"
 

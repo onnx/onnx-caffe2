@@ -20,13 +20,4 @@ struct Dimension {
   std::string param;
 };
 
-inline std::vector<Dimension> sizeToDimensions(at::ArrayRef<int64_t> size) {
-  std::vector<Dimension> dims;
-  dims.reserve(size.size());
-  for (auto s : size) {
-    dims.push_back(Dimension(true, s, ""));
-  }
-  return dims;
-}
-
 }} // namespace onnx::optimization
