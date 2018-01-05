@@ -8,12 +8,10 @@
 #include <unordered_set>
 #include <functional>
 #include <cstdint>
-
-#include <ATen/ATen.h>
+#include <sstream>
 
 #include "utils/disallow_copy.h"
 
-#include "ATen/ArrayRef.h"
 #include "generic_if.h"
 #include "assertions.h"
 #include "interned_strings.h"
@@ -21,6 +19,7 @@
 #include "resource_guard.h"
 #include "type.h"
 #include "graph_node_list.h"
+#include "array_ref.h"
 
 namespace onnx { namespace optimization {
 
@@ -57,8 +56,6 @@ static inline bool operator==(const Use & a, const Use & b) {
 using node_list = std::vector<Node*>;
 using value_list = std::vector<Value*>;
 using use_list = std::vector<Use>;
-template<typename T>
-using ArrayRef = at::ArrayRef<T>;
 using NodeKind = Symbol;
 
 struct Value {
@@ -232,10 +229,10 @@ public:
   // way to soundly cast to std::vector<const Node*> (an insane
   // implementation of std::vector could make this representationally
   // different.)
-  at::ArrayRef<Value*> inputs() {
+  ArrayRef<Value*> inputs() {
     return inputs_;
   }
-  at::ArrayRef<const Value*> inputs() const {
+  ArrayRef<const Value*> inputs() const {
     // Vectors are not convertible in const-ness of elements, but
     // raw pointers are.
     return {inputs_.data(), inputs_.size()};
@@ -246,10 +243,10 @@ public:
   // way to soundly cast to std::vector<const Node*> (an insane
   // implementation of std::vector could make this representationally
   // different.)
-  at::ArrayRef<Value*> outputs() {
+  ArrayRef<Value*> outputs() {
     return outputs_;
   }
-  at::ArrayRef<const Value*> outputs() const {
+  ArrayRef<const Value*> outputs() const {
     // Vectors are not convertible in const-ness of elements, but
     // raw pointers are.
     return {outputs_.data(), outputs_.size()};
@@ -596,17 +593,17 @@ public:
   const std::vector<std::string>& initializer_names() {
     return initializer_names_;
   }
-  at::ArrayRef<Value*> inputs() {
+  ArrayRef<Value*> inputs() {
     return input_->outputs();
   }
-  at::ArrayRef<const Value*> inputs() const {
+  ArrayRef<const Value*> inputs() const {
     const auto & inputs = input_->outputs();
     return {inputs.data(), inputs.size()};
   }
-  at::ArrayRef<Value*> outputs() {
+  ArrayRef<Value*> outputs() {
     return output_->inputs();
   }
-  at::ArrayRef<const Value*> outputs() const {
+  ArrayRef<const Value*> outputs() const {
     return static_cast<const Node*>(output_)->inputs();
   }
   graph_node_list nodes() {
