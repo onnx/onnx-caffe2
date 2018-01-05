@@ -249,12 +249,12 @@ class Caffe2Backend(Backend):
         return c2_op
 
     @classmethod
-    def _create_constant(cls, init_model, pred_model, n, opset_version):
+    def _create_constant(cls, init_model, pred_model, n, device, opset_version):
         assert len(n.outputs) == 1
         return cls._create_tensor_filling_op(n.attrs["value"], n.outputs[0])
 
     @classmethod
-    def _create_gather(cls, init_model, pred_model, n, opset_version):
+    def _create_gather(cls, init_model, pred_model, n, device, opset_version):
         (A, B) = n.inputs
         (Y, ) = n.outputs
         axis = n.attrs.get('axis', 0)
@@ -268,7 +268,7 @@ class Caffe2Backend(Backend):
             'whereas axis is ' + str(axis))
 
     @classmethod
-    def _create_gemm(cls, init_model, pred_model, n, opset_version):
+    def _create_gemm(cls, init_model, pred_model, n, device, opset_version):
         (A, B, C) = n.inputs
         (Y,) = n.outputs
         alpha = n.attrs.get('alpha', 1.)
@@ -306,6 +306,55 @@ class Caffe2Backend(Backend):
         return ops
 
     @classmethod
+    def _create_cudnn_recurrent(
+            cls, init_mh, pred_mh, name,
+            W, R, Wb, Rb,
+            X, initial_h, initial_c,
+            outputs,
+            input_size,
+            **recurrent_args):
+
+        recurrent_args.update({
+            'num_layers': 1,
+            'bidirectional': 0,
+            'dropout': 1.0,
+            'input_mode': 'linear',
+            'engine': 'CUDNN'
+        })
+
+        hidden_size = recurrent_args['hidden_size']
+
+        total_sz = ((4 *  input_size * hidden_size) + # W
+                    (4 * hidden_size * hidden_size) + # R
+                    (4 * hidden_size              ) + # Wb
+                    (4 * hidden_size              ))  # Rb
+
+        weights = init_mh.net.ConstantFill([], name + '_weights', shape=[total_sz])
+
+        reforms = ((W,  'w', 'input',     [(0,  input_size)]),
+                   (R,  'w', 'recurrent', [(0, hidden_size)]),
+                   (Wb, 'b', 'input',     []),
+                   (Rb, 'b', 'recurrent', []))
+        for name_from, param_type_suffix, input_type, extra_dims in reforms:
+            for i, gate in enumerate(['input_gate', 'output_gate', 'forget_gate', 'cell']):
+                name_to = '%s_%s_%s' % (name_from, gate, param_type_suffix)
+                dim0 = i * hidden_size, (i+1) * hidden_size
+                starts, ends = zip(dim0, *extra_dims)
+                init_mh.net.Slice(name_from, name_to, starts=starts, ends=ends)
+                init_mh.net.RecurrentParamSet(
+                    [X, weights, name_to],
+                    weights,
+                    layer=0,
+                    input_type=input_type,
+                    param_type=('%s_%s' % (gate, param_type_suffix)),
+                    **recurrent_args)
+
+        pred_mh.net.Recurrent(
+            [X, initial_h, initial_c, weights],
+            outputs + [dummy_name(), dummy_name(), dummy_name()],
+            **recurrent_args)
+
+    @classmethod
     def _rnn_shape_inference(cls, init_model, pred_model, n, input_blob, W):
         # ad-hoc, informally-specified, bug-ridden, slow
         # implementation of shape inference
@@ -330,7 +379,7 @@ class Caffe2Backend(Backend):
                 return x.attrs['hidden_size']
 
     @classmethod
-    def _create_lstm(cls, init_model, pred_model, n, opset_version):
+    def _create_lstm(cls, init_model, pred_model, n, device, opset_version):
         assert init_model is not None, "cannot convert LSTMs without access to the full model"
         assert pred_model is not None, "cannot convert LSTMs without access to the full model"
 
@@ -345,52 +394,65 @@ class Caffe2Backend(Backend):
             raise RuntimeError("best-effort shape inference for LSTM input failed")
 
         name = dummy_name()
-        init_net = core.Net("init-net")
+        init_mh = ModelHelper()
         pred_mh = ModelHelper()
-
-        hidden_t_all, hidden_t_last, _, _, params = rnn_cell.LSTM(
-            pred_mh,
-            input_blob,
-            sequence_lens,
-            [initial_h, initial_c],
-            input_size,
-            hidden_size,
-            name,
-            forward_only=True,
-            return_params=True
-        )
 
         # input and recurrence biases are squashed together in onnx but not in caffe2
         Bi = name + "_bias_i2h"
         Br = name + "_bias_gates"
-        init_net.Slice(B, Bi, starts=[0*hidden_size], ends=[4*hidden_size])
-        init_net.Slice(B, Br, starts=[4*hidden_size], ends=[8*hidden_size])
+        init_mh.net.Slice(B, Bi, starts=[0*hidden_size], ends=[4*hidden_size])
+        init_mh.net.Slice(B, Br, starts=[4*hidden_size], ends=[8*hidden_size])
 
-        # caffe2 has a different order from onnx. We need to rearrange
-        #   i o f c -> i f o c
-        reforms = ((W,  params['input']    ['weights'], [(0, input_size)]),
-                   (R,  params['recurrent']['weights'], [(0, hidden_size)]),
-                   (Bi, params['input']    ['biases'],  []),
-                   (Br, params['recurrent']['biases'],  []))
-        for name_from, name_to, extra_dims in reforms:
-            xi, xo, xf, xc = [name_from + suffix for suffix in ("_i", "_o", "_f", "_c")]
-            for i, x in enumerate([xi, xo, xf, xc]):
-                dim0 = i * hidden_size, (i+1) * hidden_size
-                starts, ends = zip(dim0, *extra_dims)
-                init_net.Slice(name_from, x, starts=starts, ends=ends)
-            init_net.Concat([xi, xf, xo, xc], [name_to, dummy_name()], axis=0)
+        if device == 'CUDA':
+            recurrent_args = {
+                'rnn_mode' : 'lstm',
+                'hidden_size' : hidden_size
+            }
+            cls._create_cudnn_recurrent(
+                init_mh, pred_mh, name,
+                W, R, Bi, Br,
+                input_blob, initial_h, initial_c,
+                n.outputs,
+                input_size,
+                **recurrent_args)
+        else:
+            hidden_t_all, hidden_t_last, _, _, params = rnn_cell.LSTM(
+                pred_mh,
+                input_blob,
+                sequence_lens,
+                [initial_h, initial_c],
+                input_size,
+                hidden_size,
+                name,
+                forward_only=True,
+                return_params=True
+            )
 
-        pred_mh.net = pred_mh.net.Clone(
-            "dummy-clone-net",
-            blob_remap={ hidden_t_all: n.outputs[0], hidden_t_last: n.outputs[1] }
-        )
+            # caffe2 has a different order from onnx. We need to rearrange
+            #   i o f c -> i f o c
+            reforms = ((W,  params['input']    ['weights'], [(0, input_size)]),
+                       (R,  params['recurrent']['weights'], [(0, hidden_size)]),
+                       (Bi, params['input']    ['biases'],  []),
+                       (Br, params['recurrent']['biases'],  []))
+            for name_from, name_to, extra_dims in reforms:
+                xi, xo, xf, xc = [name_from + suffix for suffix in ("_i", "_o", "_f", "_c")]
+                for i, x in enumerate([xi, xo, xf, xc]):
+                    dim0 = i * hidden_size, (i+1) * hidden_size
+                    starts, ends = zip(dim0, *extra_dims)
+                    init_mh.net.Slice(name_from, x, starts=starts, ends=ends)
+                init_mh.net.Concat([xi, xf, xo, xc], [name_to, dummy_name()], axis=0)
+
+            pred_mh.net = pred_mh.net.Clone(
+                "dummy-clone-net",
+                blob_remap={ hidden_t_all: n.outputs[0], hidden_t_last: n.outputs[1] }
+            )
 
         return Caffe2Ops(list(pred_mh.Proto().op),
-                         list(init_net.Proto().op),
+                         list(init_mh.Proto().op),
                          list(pred_mh.Proto().external_input))
 
     @classmethod
-    def _create_gru(cls, init_model, pred_model, n, opset_version):
+    def _create_gru(cls, init_model, pred_model, n, device, opset_version):
         assert init_model is not None, "cannot convert GRUs without access to the full model"
         assert pred_model is not None, "cannot convert GRUs without access to the full model"
 
@@ -404,6 +466,10 @@ class Caffe2Backend(Backend):
         input_size = cls._rnn_shape_inference(init_model, pred_model, n, input_blob, W)
         if input_size is None:
             raise RuntimeError("best-effort shape inference for GRU input failed")
+
+        if device == DeviceType.CUDA:
+            return cls._create_cudnn_recurrent(
+                W, X, initial_h, dummy_name(), n.outputs, 'gru', False, hidden_size)
 
         name = dummy_name()
         init_net = core.Net("init-net")
@@ -455,7 +521,7 @@ class Caffe2Backend(Backend):
                          list(pred_mh.Proto().external_input))
 
     @classmethod
-    def _create_pad(cls, init_model, pred_model, n, opset_version):
+    def _create_pad(cls, init_model, pred_model, n, device, opset_version):
         if opset_version < 2:
             pads = n.attrs['paddings']
         else:
@@ -468,20 +534,20 @@ class Caffe2Backend(Backend):
         if min(pads) < 0:
             raise ValueError('ONNX does not support negative pads in Pad, but get {}.'.format(pads))
         pads[:] = pads[2:4] + pads[6:8]
-        return cls._common_onnx_node_to_caffe2_op(init_model, pred_model, n, opset_version)
+        return cls._common_onnx_node_to_caffe2_op(init_model, pred_model, n, device, opset_version)
 
     @classmethod
-    def _create_concat(cls, init_model, pred_model, n, opset_version):
+    def _create_concat(cls, init_model, pred_model, n, device, opset_version):
         # TODO: Caffe2 Concat has an extra output. It should be only
         # used when doing training, so we should change Caffe2 to allow
         # 1 output.
-        op = cls._common_onnx_node_to_caffe2_op(init_model, pred_model, n, opset_version)
+        op = cls._common_onnx_node_to_caffe2_op(init_model, pred_model, n, device, opset_version)
         assert len(op.output) == 1
         op.output.append(dummy_name())
         return op
 
     @classmethod
-    def _create_optimized_rnn(cls, init_model, pred_model, n, opset_version):
+    def _create_optimized_rnn(cls, init_model, pred_model, n, device, opset_version):
         # TODO: we cheat and rely on the fact that ONNX weight layout matches
         # CuDNN's. Properly we should extract the weight tensor and invoke
         # RecurrentParamSet exposed by C2
@@ -505,8 +571,8 @@ class Caffe2Backend(Backend):
         return op
 
     @classmethod
-    def _create_slice(cls, init_model, pred_model, n, opset_version):
-        op = cls._common_onnx_node_to_caffe2_op(init_model, pred_model, n, opset_version)
+    def _create_slice(cls, init_model, pred_model, n, device, opset_version):
+        op = cls._common_onnx_node_to_caffe2_op(init_model, pred_model, n, device, opset_version)
         args = {arg.name: arg for arg in op.arg}
         starts_vals = np.array(
             args.pop('starts').ints, dtype=np.int64).tolist()
@@ -644,7 +710,7 @@ class Caffe2Backend(Backend):
     # differently.
 
     @classmethod
-    def _create_conv_pool_op_base(cls, init_model, pred_model, n, opset_version):
+    def _create_conv_pool_op_base(cls, init_model, pred_model, n, device, opset_version):
         if n.op_type.startswith('Global'):
             n.attrs['global_pooling'] = 1
 
@@ -658,11 +724,11 @@ class Caffe2Backend(Backend):
                 # Caffe2 requires pads to be twice the size of kernels.
                 n.attrs['pads'] = pads * 2
 
-        return cls._common_onnx_node_to_caffe2_op(init_model, pred_model, n, opset_version)
+        return cls._common_onnx_node_to_caffe2_op(init_model, pred_model, n, device, opset_version)
 
     @classmethod
-    def _create_reshape(cls, init_model, pred_model, n, opset_version):
-        c2_op = cls._common_onnx_node_to_caffe2_op(init_model, pred_model, n, opset_version)
+    def _create_reshape(cls, init_model, pred_model, n, device, opset_version):
+        c2_op = cls._common_onnx_node_to_caffe2_op(init_model, pred_model, n, device, opset_version)
         # Caffe2 has an extra output
         c2_op.output.append(dummy_name())
         return c2_op
@@ -755,12 +821,12 @@ class Caffe2Backend(Backend):
 
     @classmethod
     # TODO: This method needs a refactor for clarity
-    def _onnx_node_to_caffe2_op(cls, init_model, pred_model, node_def, opset_version):
+    def _onnx_node_to_caffe2_op(cls, init_model, pred_model, node_def, device, opset_version):
         if node_def.op_type in cls._special_operators:
             translator = getattr(cls, cls._special_operators[node_def.op_type])
         else:
             translator = cls._common_onnx_node_to_caffe2_op
-        ops = translator(init_model, pred_model, OnnxNode(node_def), opset_version)
+        ops = translator(init_model, pred_model, OnnxNode(node_def), device, opset_version)
         if isinstance(ops, Caffe2Ops):
             return ops
         if not isinstance(ops, collections.Iterable):
@@ -768,7 +834,7 @@ class Caffe2Backend(Backend):
         return Caffe2Ops(ops, [], [])
 
     @classmethod
-    def _common_onnx_node_to_caffe2_op(cls, init_model, pred_model, onnx_node, opset_version):
+    def _common_onnx_node_to_caffe2_op(cls, init_model, pred_model, onnx_node, device, opset_version):
         """
         This translator performs the basic translation of ONNX nodes into
         Caffe2 operators.  Besides doing a straightforward marshalling from
@@ -890,7 +956,7 @@ class Caffe2Backend(Backend):
             net.device_option.CopyFrom(device_option)
             for node in model.graph.node:
                 c2ops = cls._onnx_node_to_caffe2_op(
-                    init_model, pred_model, node, opset_version)
+                    init_model, pred_model, node, device, opset_version)
                 (init_net if include_initializers else net).op.extend(c2ops.init_ops)
                 net.op.extend(c2ops.ops)
                 net.external_input.extend(c2ops.interface_blobs)
