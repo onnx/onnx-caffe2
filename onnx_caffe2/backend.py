@@ -136,6 +136,7 @@ class Caffe2Backend(Backend):
         'MatMul':                'BatchMatMul',
         'Upsample':              'ResizeNearest',
         'Equal':                 'EQ',
+        'Identity':              'Copy',
     }
 
     _global_renamed_attrs = {'kernel_shape': 'kernels'}
