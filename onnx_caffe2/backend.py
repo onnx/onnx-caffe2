@@ -144,6 +144,7 @@ class Caffe2Backend(Backend):
         'Squeeze':              {'axes': 'dims'},
         'Transpose':            {'perm': 'axes'},
         'Upsample':             {'mode': ''},
+        'ConvTranspose':        {'output_padding': 'adjs'},
     }
 
     # operators whose behavior is different beyond renaming
