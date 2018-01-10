@@ -12,7 +12,7 @@ import collections
 from subprocess import Popen, PIPE
 
 import caffe2
-from caffe2.python import core, workspace, rnn_cell
+from caffe2.python import core, workspace, rnn_cell, gru_cell
 from caffe2.python.model_helper import ModelHelper
 from caffe2.proto import caffe2_pb2
 import caffe2.python.utils
@@ -164,6 +164,7 @@ class Caffe2Backend(Backend):
         'OptimizedRNN': '_create_optimized_rnn',
         'Slice': '_create_slice',
         'LSTM': '_create_lstm',
+        'GRU': '_create_gru',
     }
 
     # NB: By default, you will use the LATEST definition of the operator,
@@ -305,40 +306,43 @@ class Caffe2Backend(Backend):
         return ops
 
     @classmethod
-    def _create_lstm(cls, init_model, pred_model, n, opset_version):
-        assert init_model is not None, "cannot convert LSTMs through this codepath"
-        assert pred_model is not None, "cannot convert LSTMs through this codepath"
-
-        attrs = dict(n.attrs)
-        hidden_size = attrs.pop('hidden_size')
-        assert not attrs, "unsupported LSTM attributes: " + attrs.keys()
-
-        input_blob, W, R, B, sequence_lens, initial_h, initial_c = n.inputs
-
+    def _rnn_shape_inference(cls, init_model, pred_model, n, input_blob, W):
         # ad-hoc, informally-specified, bug-ridden, slow
         # implementation of shape inference
-        input_size = None
 
         # if the weight matrices are directly provided as
         # initializers, their dimensions should be available in the
         # init net model.
         for x in init_model.graph.input:
             if x.name == W:
-                input_size = x.type.tensor_type.shape.dim[1].dim_value
+                return x.type.tensor_type.shape.dim[1].dim_value
 
         # otherwise, assume that the input_blob is either a direct
-        # graph input, or another LSTM. This matches the pattern
-        # produced by exporting from pytorch (where the weight
-        # matrices are unusable for this purpose due to reshaping
-        # operations that lose shape information).
+        # graph input, or another rnn op of the same type. This
+        # matches the pattern produced by exporting from pytorch
+        # (where the weight matrices are unusable for this purpose due
+        # to reshaping operations that lose shape information).
         for x in pred_model.graph.input:
             if x.name == input_blob:
-                input_size = x.type.tensor_type.shape.dim[2].dim_value
+                return x.type.tensor_type.shape.dim[2].dim_value
         for x in map(OnnxNode, pred_model.graph.node):
             if x.op_type == n.op_type and x.outputs[0] == input_blob:
-                input_size = x.attrs['hidden_size']
+                return x.attrs['hidden_size']
 
-        assert input_size is not None, "best-effort shape inference for LSTM input failed"
+    @classmethod
+    def _create_lstm(cls, init_model, pred_model, n, opset_version):
+        assert init_model is not None, "cannot convert LSTMs without access to the full model"
+        assert pred_model is not None, "cannot convert LSTMs without access to the full model"
+
+        attrs = dict(n.attrs) # make a copy, which is safe to mutate
+        hidden_size = attrs.pop('hidden_size')
+        assert not attrs, "unsupported LSTM attributes: " + str(attrs.keys())
+
+        input_blob, W, R, B, sequence_lens, initial_h, initial_c = n.inputs
+
+        input_size = cls._rnn_shape_inference(init_model, pred_model, n, input_blob, W)
+        if input_size is None:
+            raise RuntimeError("best-effort shape inference for LSTM input failed")
 
         name = dummy_name()
         init_net = core.Net("init-net")
@@ -375,6 +379,71 @@ class Caffe2Backend(Backend):
                 starts, ends = zip(dim0, *extra_dims)
                 init_net.Slice(name_from, x, starts=starts, ends=ends)
             init_net.Concat([xi, xf, xo, xc], [name_to, dummy_name()], axis=0)
+
+        pred_mh.net = pred_mh.net.Clone(
+            "dummy-clone-net",
+            blob_remap={ hidden_t_all: n.outputs[0], hidden_t_last: n.outputs[1] }
+        )
+
+        return Caffe2Ops(list(pred_mh.Proto().op),
+                         list(init_net.Proto().op),
+                         list(pred_mh.Proto().external_input))
+
+    @classmethod
+    def _create_gru(cls, init_model, pred_model, n, opset_version):
+        assert init_model is not None, "cannot convert GRUs without access to the full model"
+        assert pred_model is not None, "cannot convert GRUs without access to the full model"
+
+        attrs = dict(n.attrs) # make a copy, which is safe to mutate
+        hidden_size = attrs.pop('hidden_size')
+        linear_before_reset = attrs.pop('linear_before_reset')
+        assert not attrs, "unsupported GRU attributes: " + str(attrs.keys())
+
+        input_blob, W, R, B, sequence_lens, initial_h = n.inputs
+
+        input_size = cls._rnn_shape_inference(init_model, pred_model, n, input_blob, W)
+        if input_size is None:
+            raise RuntimeError("best-effort shape inference for GRU input failed")
+
+        name = dummy_name()
+        init_net = core.Net("init-net")
+        pred_mh = ModelHelper()
+
+        hidden_t_all, hidden_t_last = gru_cell.GRU(
+            pred_mh,
+            input_blob,
+            sequence_lens,
+            [initial_h],
+            input_size,
+            hidden_size,
+            name,
+            forward_only=True,
+            linear_before_reset=linear_before_reset
+        )
+
+        # input and recurrence biases are squashed together in onnx but not in caffe2
+        Bi = name + "_bias_i2h"
+        Br = name + "_bias_gates"
+        init_net.Slice(B, Bi, starts=[0*hidden_size], ends=[3*hidden_size])
+        init_net.Slice(B, Br, starts=[3*hidden_size], ends=[6*hidden_size])
+
+        # caffe2 has a different order from onnx. We need to rearrange
+        #  z r h  -> r z h
+        #
+        # TODO implement support for return_params in gru_cell.GRU.
+        # Until then, hardcode blob names.
+        reforms = ((W,  'i2h_w',    True,  [(0,input_size)]),
+                   (R,  'gate_t_w', False, [(0,hidden_size)]),
+                   (Bi, 'i2h_b',    True,  []),
+                   (Br, 'gate_t_b', False, []))
+        for name_from, name_to, do_concat, extra_dims in reforms:
+            xz, xr, xh = ['%s/%s_%s' % (name, prefix, name_to) for prefix in ('update', 'reset', 'output')]
+            for i, x in enumerate([xz, xr, xh]):
+                dim0 = i * hidden_size, (i+1) * hidden_size
+                starts, ends = zip(dim0, *extra_dims)
+                init_net.Slice(name_from, x, starts=starts, ends=ends)
+            if do_concat:
+                init_net.Concat([xr, xz, xh], ['%s/%s' % (name, name_to), dummy_name()], axis=0)
 
         pred_mh.net = pred_mh.net.Clone(
             "dummy-clone-net",
@@ -807,17 +876,17 @@ class Caffe2Backend(Backend):
         cls._inplace_rewrite(pred_model.graph)
 
         init_net = caffe2_pb2.NetDef()
-        predict_net = caffe2_pb2.NetDef()
+        pred_net = caffe2_pb2.NetDef()
 
         init_net.name = onnx_model.graph.name + '_init'
-        predict_net.name = onnx_model.graph.name + '_predict'
+        pred_net.name = onnx_model.graph.name + '_predict'
 
         if include_initializers:
             init_net.op.extend(cls._create_tensor_filling_op(tp) for tp in onnx_model.graph.initializer)
 
         dummy_name(cls._all_names_in_graph(init_model.graph) | cls._all_names_in_graph(pred_model.graph))
 
-        for net, model in ( (init_net, init_model), (predict_net, pred_model) ):
+        for net, model in ( (init_net, init_model), (pred_net, pred_model) ):
             net.device_option.CopyFrom(device_option)
             for node in model.graph.node:
                 c2ops = cls._onnx_node_to_caffe2_op(
@@ -830,7 +899,7 @@ class Caffe2Backend(Backend):
             net.external_input.extend(
                 value_info.name for value_info in model.graph.input)
 
-        return init_net, predict_net
+        return init_net, pred_net
 
     # wrapper for backwards compatability
     @classmethod
