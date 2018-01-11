@@ -162,6 +162,7 @@ class Caffe2Backend(Backend):
         'Gemm': '_create_gemm',
         'Pad': '_create_pad',
         'Concat': '_create_concat',
+        'LogSoftmax': '_create_logsoftmax',
         'OptimizedRNN': '_create_optimized_rnn',
         'Slice': '_create_slice',
         'LSTM': '_create_lstm',
@@ -267,6 +268,18 @@ class Caffe2Backend(Backend):
         raise ValueError(
             'Caffe2 only supports Gather with axis being 1 or 2,' +
             'whereas axis is ' + str(axis))
+
+    @classmethod
+    def _create_logsoftmax(cls, init_model, pred_model, n, opset_version):
+        # NB: this implementation is not backward stable.
+        (A,) = n.inputs
+        (Y,) = n.outputs
+        axis = n.attrs.get('axis', 1)
+        ops = []
+        softmax_A = dummy_name()
+        ops.append(core.CreateOperator('Softmax', [A], [softmax_A], axis=axis))
+        ops.append(core.CreateOperator('Log', [softmax_A], [Y]))
+        return ops
 
     @classmethod
     def _create_gemm(cls, init_model, pred_model, n, opset_version):
