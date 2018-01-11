@@ -167,6 +167,7 @@ class Caffe2Backend(Backend):
         'Slice': '_create_slice',
         'LSTM': '_create_lstm',
         'GRU': '_create_gru',
+        'RNN': '_create_rnn',
     }
 
     # NB: By default, you will use the LATEST definition of the operator,
@@ -342,6 +343,56 @@ class Caffe2Backend(Backend):
         for x in map(OnnxNode, pred_model.graph.node):
             if x.op_type == n.op_type and x.outputs[0] == input_blob:
                 return x.attrs['hidden_size']
+
+    @classmethod
+    def _create_rnn(cls, init_model, pred_model, n, opset_version):
+        assert init_model is not None, "cannot convert RNNs without access to the full model"
+        assert pred_model is not None, "cannot convert RNNs without access to the full model"
+
+        attrs = dict(n.attrs) # make a copy, which is safe to mutate
+        hidden_size = attrs.pop('hidden_size')
+        activation = attrs.pop('activations')[0]
+        assert not attrs, "unsupported RNN attributes: " + str(attrs.keys())
+
+        input_blob, W, R, B, sequence_lens, initial_h = n.inputs
+
+        input_size = cls._rnn_shape_inference(init_model, pred_model, n, input_blob, W)
+        if input_size is None:
+            raise RuntimeError("best-effort shape inference for RNN input failed")
+
+        name = dummy_name()
+        init_net = core.Net("init-net")
+        pred_mh = ModelHelper()
+
+        # input and recurrence biases are squashed together in onnx but not in caffe2
+        Bi = name + "/i2h_b"
+        Br = name + "/gates_t_b"
+        init_net.Slice(B, Bi, starts=[0*hidden_size], ends=[1*hidden_size])
+        init_net.Slice(B, Br, starts=[1*hidden_size], ends=[2*hidden_size])
+
+        hidden_t_all, hidden_t_last = rnn_cell.ElmanRNN(
+            pred_mh,
+            input_blob,
+            sequence_lens,
+            [initial_h],
+            input_size,
+            hidden_size,
+            name,
+            forward_only=True,
+            activation=activation
+        )
+
+        init_net.Copy(W, name + '/i2h_w')
+        init_net.Copy(R, name + '/gates_t_w')
+
+        pred_mh.net = pred_mh.net.Clone(
+            "dummy-clone-net",
+            blob_remap={ hidden_t_all: n.outputs[0], hidden_t_last: n.outputs[1] }
+        )
+
+        return Caffe2Ops(list(pred_mh.Proto().op),
+                         list(init_net.Proto().op),
+                         list(pred_mh.Proto().external_input))
 
     @classmethod
     def _create_lstm(cls, init_model, pred_model, n, opset_version):
