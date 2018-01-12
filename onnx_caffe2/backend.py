@@ -341,9 +341,19 @@ class Caffe2Backend(Backend):
         for x in pred_model.graph.input:
             if x.name == input_blob:
                 return x.type.tensor_type.shape.dim[2].dim_value
-        for x in map(OnnxNode, pred_model.graph.node):
-            if x.op_type == n.op_type and x.outputs[0] == input_blob:
-                return x.attrs['hidden_size']
+
+        curr = n
+        while True:
+            for x in pred_model.graph.input:
+                if x.name == curr.inputs[0] and curr.op_type == 'Gather':
+                    return x.type.tensor_type.shape.dim[1].dim_value
+            prev = [x for x in map(OnnxNode, pred_model.graph.node) if x.outputs[0] == curr.inputs[0]]
+            if len(prev) != 1:
+                return
+            prev = prev[0]
+            if prev.op_type == n.op_type:
+                return prev.attrs['hidden_size']
+            curr = prev
 
     @classmethod
     def _create_rnn(cls, init_model, pred_model, n, opset_version):
