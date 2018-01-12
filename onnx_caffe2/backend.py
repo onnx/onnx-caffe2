@@ -371,7 +371,7 @@ class Caffe2Backend(Backend):
         init_net.Slice(B, Bi, starts=[0*hidden_size], ends=[1*hidden_size])
         init_net.Slice(B, Br, starts=[1*hidden_size], ends=[2*hidden_size])
 
-        hidden_t_all, hidden_t_last = rnn_cell.ElmanRNN(
+        hidden_t_all, hidden_t_last = rnn_cell.BasicRNN(
             pred_mh,
             input_blob,
             sequence_lens,
