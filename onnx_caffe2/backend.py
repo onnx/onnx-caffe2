@@ -374,8 +374,10 @@ class Caffe2Backend(Backend):
 
         attrs = dict(n.attrs) # make a copy, which is safe to mutate
         hidden_size = attrs.pop('hidden_size')
-        activation = force_unicode(attrs.pop('activations')[0])
+        activation = force_unicode(attrs.pop('activations', ('tanh',))[0])
+        direction = force_unicode(attrs.pop('direction', 'forward'))
         assert not attrs, "unsupported RNN attributes: " + str(attrs.keys())
+        assert direction in ['forward', 'bidirectional'], "unsupported backwards RNN"
 
         input_blob, W, R, B, sequence_lens, initial_h = n.inputs
 
@@ -386,36 +388,74 @@ class Caffe2Backend(Backend):
         if input_size is None:
             raise RuntimeError("best-effort shape inference for RNN input failed")
 
-        name = dummy_name()
         init_net = core.Net("init-net")
         pred_mh = ModelHelper()
 
-        # input and recurrence biases are squashed together in onnx but not in caffe2
-        Bi = name + "/i2h_b"
-        Br = name + "/gates_t_b"
-        init_net.Slice(B, Bi, starts=[0*hidden_size], ends=[1*hidden_size])
-        init_net.Slice(B, Br, starts=[1*hidden_size], ends=[2*hidden_size])
+        def make_rnn(direction_offset):
+            name = dummy_name()
 
-        hidden_t_all, hidden_t_last = rnn_cell.BasicRNN(
-            pred_mh,
-            input_blob,
-            sequence_lens,
-            [initial_h],
-            input_size,
-            hidden_size,
-            name,
-            drop_states=True,
-            forward_only=True,
-            activation=activation
-        )
+            # input and recurrence biases are squashed together in
+            # onnx but not in caffe2
 
-        init_net.Copy(W, name + '/i2h_w')
-        init_net.Copy(R, name + '/gates_t_w')
+            bias_offset = 2 * direction_offset * hidden_size
+            init_net.Slice(B, name + "/i2h_b",
+                           starts=[bias_offset + 0 * hidden_size],
+                           ends  =[bias_offset + 1 * hidden_size])
+            init_net.Slice(B, name + "/gates_t_b",
+                           starts=[bias_offset + 1 * hidden_size],
+                           ends  =[bias_offset + 2 * hidden_size])
 
-        pred_mh.net = pred_mh.net.Clone(
-            "dummy-clone-net",
-            blob_remap={ hidden_t_all: n.outputs[0], hidden_t_last: n.outputs[1] }
-        )
+            weight_offset = direction_offset * hidden_size
+            init_net.Slice(W, name + '/i2h_w',
+                           starts=[weight_offset + 0 * hidden_size, 0],
+                           ends  =[weight_offset + 1 * hidden_size,-1])
+            init_net.Slice(R, name + '/gates_t_w',
+                           starts=[weight_offset + 0 * hidden_size, 0],
+                           ends  =[weight_offset + 1 * hidden_size,-1])
+
+            initial_h_sliced = name + '/initial_h'
+            init_net.Slice(initial_h, initial_h_sliced,
+                           starts=[direction_offset + 0, 0, 0],
+                           ends  =[direction_offset + 1,-1,-1])
+
+            if direction_offset == 1:
+                input = pred_mh.net.ReversePackedSegs(
+                    [input_blob, sequence_lens], name + "/input-reversed")
+            else:
+                input = input_blob
+
+            hidden_t_all, hidden_t_last = rnn_cell.BasicRNN(
+                pred_mh,
+                input,
+                sequence_lens,
+                [initial_h_sliced],
+                input_size,
+                hidden_size,
+                name,
+                drop_states=True,
+                forward_only=True,
+                activation=activation
+            )
+
+            if direction_offset == 1:
+                hidden_t_all = pred_mh.net.ReversePackedSegs(
+                    [hidden_t_all, sequence_lens], name + "/output-reversed")
+
+            return hidden_t_all, hidden_t_last
+
+        if direction == 'forward':
+            hidden_t_all, hidden_t_last = make_rnn(0)
+            pred_mh.net = pred_mh.net.Clone(
+                "dummy-clone-net",
+                blob_remap={ hidden_t_all: n.outputs[0], hidden_t_last: n.outputs[1] }
+            )
+        elif direction == 'bidirectional':
+            hidden_t_all_f, hidden_t_last_f = make_rnn(0)
+            hidden_t_all_b, hidden_t_last_b = make_rnn(1)
+            pred_mh.net.Concat([hidden_t_all_f, hidden_t_all_b],
+                               [n.outputs[0], dummy_name()], axis=2)
+            pred_mh.net.Concat([hidden_t_last_f, hidden_t_last_b],
+                               [n.outputs[1], dummy_name()], axis=2)
 
         return Caffe2Ops(list(pred_mh.Proto().op),
                          list(init_net.Proto().op),
