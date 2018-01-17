@@ -49,7 +49,7 @@ Testing coverage issues/status: https://github.com/onnx/onnx-caffe2/blob/master/
 During development it's convenient to install onnx-caffe2 in development mode:
 
 ```
-git clone  https://github.com/onnx/onnx-caffe2.git
+git clone  https://github.com/onnx/onnx-caffe2.git --recursive
 pip install -e onnx-caffe2/
 ```
 
