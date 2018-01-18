@@ -21,6 +21,7 @@ import onnx
 from onnx import checker, GraphProto, TensorProto, AttributeProto, ModelProto
 import onnx.numpy_helper
 import onnx.defs
+import onnx.optimizer
 from onnx.backend.base import Backend, Device, DeviceType, namedtupledict
 
 from onnx_caffe2.workspace import Workspace
@@ -758,24 +759,11 @@ class Caffe2Backend(Backend):
 
     @staticmethod
     def optimize_onnx(input, init=False, predict=False):
-        # this is where the binary is located when onnx-caffe2 has been installed
-        executable = os.path.join(os.path.realpath(os.path.dirname(__file__)),
-                                  '..', '..', '..', '..', 'bin', 'optimize-onnx')
-        # if it's not there, we are likely in development mode and can
-        # just look for it in PATH
-        if not os.path.isfile(executable):
-            executable = 'optimize-onnx'
-        cmd = [executable]
-        if init and not predict:
-            cmd.append('init')
-        elif predict and not init:
-            cmd.append('predict')
-        elif init and predict:
-            raise Exception("optimize_onnx called with both init and predict set")
-        proc = Popen(cmd, stdin=PIPE, stdout=PIPE, stderr=PIPE)
-        stdout, stderr = proc.communicate(input)
-        assert proc.returncode == 0
-        return stdout
+        out = onnx.optimizer.optimize(input, ['fuse_consecutive_transposes',
+                                              'eliminate_nop_transpose',
+                                              'fuse_transpose_into_gemm'])
+        onnx.optimizer.split(out, init, predict)
+        return out
 
     @classmethod
     def prepare(cls, model, device='CPU', **kwargs):
