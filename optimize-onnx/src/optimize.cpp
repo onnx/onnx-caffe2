@@ -173,6 +173,9 @@ void split_init_and_predict(std::shared_ptr<Graph> g, bool init, bool predict) {
       new_interface.erase(v);
     }
     for (Value * v : new_interface) {
+      if (v->node()->kind() == kOnnxElidedInput) {
+        continue;
+      }
       g->registerOutput(v);
     }
 

@@ -203,6 +203,18 @@ std::unique_ptr<Graph> graphProtoToGraph(const onnx::GraphProto& gp) {
   // inputs.
   std::unordered_map<Node*, std::vector<std::string>> inputs_by_node;
 
+  {
+    // ONNX represents optional arguments in two ways
+    //  - they are simply not provided
+    //  - OR the empty string is passed as the input name
+    // This is to handle that second case, which needs a dummy node to
+    // be representable in the graph IR.
+    auto * n = g->create(kOnnxElidedInput, /* num_outputs = */ 1);
+    g->appendNode(n);
+    auto out = n->outputs()[0];
+    value_by_name_of[""] = out;
+  }
+
   for (int i = 0; i < gp.input_size(); i++) {
     auto vip = gp.input(i);
     auto v = g->addInput();

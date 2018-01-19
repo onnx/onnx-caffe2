@@ -184,9 +184,16 @@ void encodeGraph(onnx::GraphProto * p_g, const std::shared_ptr<Graph> & g) {
       // to help symbolics do the right thing.
       continue;
     }
+    if (node->kind() == kOnnxElidedInput) {
+      continue;
+    }
     auto p_n = p_g->add_node();
     for(auto input : node->inputs()) {
-      p_n->add_input(value_name(input));
+      if (input->node()->kind() == kOnnxElidedInput) {
+        p_n->add_input("");
+      } else {
+        p_n->add_input(value_name(input));
+      }
     }
     for(auto output : node->outputs()) {
       p_n->add_output(value_name(output));

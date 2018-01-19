@@ -39,6 +39,7 @@ _(SubConstant) \
 _(Scale) \
 _(Transpose) \
 _(Reshape) \
+_(OnnxElidedInput) \
 _(split) \
 _(Offset) \
 _(value) \

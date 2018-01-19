@@ -326,12 +326,16 @@ class Caffe2Backend(Backend):
         # ad-hoc, informally-specified, bug-ridden, slow
         # implementation of shape inference
 
+        # returns seq_length, batch_size, input_size
+
         # if the weight matrices are directly provided as
         # initializers, their dimensions should be available in the
         # init net model.
         for x in init_model.graph.input:
             if x.name == W:
-                return x.type.tensor_type.shape.dim[1].dim_value
+                return (x.type.tensor_type.shape.dim[0].dim_value,
+                        x.type.tensor_type.shape.dim[1].dim_value,
+                        x.type.tensor_type.shape.dim[2].dim_value)
 
         # otherwise, assume that the input_blob is either a direct
         # graph input, or another rnn op of the same type. This
@@ -340,19 +344,26 @@ class Caffe2Backend(Backend):
         # to reshaping operations that lose shape information).
         for x in pred_model.graph.input:
             if x.name == input_blob:
-                return x.type.tensor_type.shape.dim[2].dim_value
+                return (x.type.tensor_type.shape.dim[0].dim_value,
+                        x.type.tensor_type.shape.dim[1].dim_value,
+                        x.type.tensor_type.shape.dim[2].dim_value)
 
         curr = n
         while True:
             for x in pred_model.graph.input:
                 if x.name == curr.inputs[0] and curr.op_type == 'Gather':
-                    return x.type.tensor_type.shape.dim[1].dim_value
+                    return (x.type.tensor_type.shape.dim[0].dim_value,
+                            x.type.tensor_type.shape.dim[1].dim_value,
+                            x.type.tensor_type.shape.dim[2].dim_value)
             prev = [x for x in map(OnnxNode, pred_model.graph.node) if x.outputs[0] == curr.inputs[0]]
             if len(prev) != 1:
                 return
             prev = prev[0]
             if prev.op_type == n.op_type:
-                return prev.attrs['hidden_size']
+                # accidentally n-squared ?!
+                seq_len, batch_size, _ = cls._rnn_shape_inference(
+                    init_model, pred_model, prev, prev.inputs[0], prev.inputs[1])
+                return seq_len, batch_size, prev.attrs['hidden_size']
             curr = prev
 
     @classmethod
@@ -367,13 +378,17 @@ class Caffe2Backend(Backend):
 
         input_blob, W, R, B, sequence_lens, initial_h = n.inputs
 
-        input_size = cls._rnn_shape_inference(init_model, pred_model, n, input_blob, W)
-        if input_size is None:
-            raise RuntimeError("best-effort shape inference for RNN input failed")
+        inferred_sizes = cls._rnn_shape_inference(init_model, pred_model, n, input_blob, W)
 
         name = dummy_name()
         init_net = core.Net("init-net")
         pred_mh = ModelHelper()
+
+        if inferred_sizes is not None:
+            seq_length, batch_size, input_size = inferred_sizes
+            sequence_lens = name + "_sequence_lens"
+            init_net.ConstantFill(
+                [], [sequence_lens], dtype=caffe2_pb2.TensorProto.INT32, value=seq_length, shape=[batch_size])
 
         # input and recurrence biases are squashed together in onnx but not in caffe2
         Bi = name + "/i2h_b"
@@ -416,13 +431,17 @@ class Caffe2Backend(Backend):
 
         input_blob, W, R, B, sequence_lens, initial_h, initial_c = n.inputs
 
-        input_size = cls._rnn_shape_inference(init_model, pred_model, n, input_blob, W)
-        if input_size is None:
-            raise RuntimeError("best-effort shape inference for LSTM input failed")
+        inferred_sizes = cls._rnn_shape_inference(init_model, pred_model, n, input_blob, W)
 
         name = dummy_name()
         init_net = core.Net("init-net")
         pred_mh = ModelHelper()
+
+        if inferred_sizes is not None:
+            seq_length, batch_size, input_size = inferred_sizes
+            sequence_lens = name + "_sequence_lens"
+            init_net.ConstantFill(
+                [], [sequence_lens], dtype=caffe2_pb2.TensorProto.INT32, value=seq_length, shape=[batch_size])
 
         hidden_t_all, hidden_t_last, _, _, params = rnn_cell.LSTM(
             pred_mh,
@@ -477,13 +496,17 @@ class Caffe2Backend(Backend):
 
         input_blob, W, R, B, sequence_lens, initial_h = n.inputs
 
-        input_size = cls._rnn_shape_inference(init_model, pred_model, n, input_blob, W)
-        if input_size is None:
-            raise RuntimeError("best-effort shape inference for GRU input failed")
+        inferred_sizes = cls._rnn_shape_inference(init_model, pred_model, n, input_blob, W)
 
         name = dummy_name()
         init_net = core.Net("init-net")
         pred_mh = ModelHelper()
+
+        if inferred_sizes is not None:
+            seq_length, batch_size, input_size = inferred_sizes
+            sequence_lens = name + "_sequence_lens"
+            init_net.ConstantFill(
+                [], [sequence_lens], dtype=caffe2_pb2.TensorProto.INT32, value=seq_length, shape=[batch_size])
 
         hidden_t_all, hidden_t_last = gru_cell.GRU(
             pred_mh,
@@ -774,7 +797,7 @@ class Caffe2Backend(Backend):
             raise Exception("optimize_onnx called with both init and predict set")
         proc = Popen(cmd, stdin=PIPE, stdout=PIPE, stderr=PIPE)
         stdout, stderr = proc.communicate(input)
-        assert proc.returncode == 0
+        assert proc.returncode == 0, stderr
         return stdout
 
     @classmethod
