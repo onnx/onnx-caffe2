@@ -23,7 +23,7 @@ SRC_DIR = os.path.join(TOP_DIR, 'onnx_caffe2')
 
 try:
     git_version = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=TOP_DIR).decode('ascii').strip()
-except subprocess.CalledProcessError:
+except (OSError, subprocess.CalledProcessError):
     git_version = None
 
 with open(os.path.join(TOP_DIR, 'VERSION_NUMBER')) as version_file:
