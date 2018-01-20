@@ -759,10 +759,14 @@ class Caffe2Backend(Backend):
 
     @staticmethod
     def optimize_onnx(input, init=False, predict=False):
-        out = onnx.optimizer.optimize(input, ['fuse_consecutive_transposes',
-                                              'eliminate_nop_transpose',
-                                              'fuse_transpose_into_gemm'])
-        onnx.optimizer.split(out, init, predict)
+        passes =  ['fuse_consecutive_transposes',
+                   'eliminate_nop_transpose',
+                   'fuse_transpose_into_gemm']
+        if init:
+            passes.append('split_init')
+        if predict:
+            passes.append('split_predict')
+        out = onnx.optimizer.optimize(input, passes)
         return out
 
     @classmethod
