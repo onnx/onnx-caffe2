@@ -68,16 +68,11 @@ class develop(setuptools.command.develop.develop):
         self.run_command('build')
         setuptools.command.develop.develop.run(self)
 
-class install(setuptools.command.install.install):
-    def run(self):
-        setuptools.command.install.install.run(self)
-
 cmdclass={
     'create_version': create_version,
     'build_py': build_py,
     'build': build,
     'develop': develop,
-    'install': install,
 }
 
 ################################################################################
