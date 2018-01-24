@@ -139,6 +139,9 @@ class Caffe2Backend(Backend):
         'Equal':                 'EQ',
         'Identity':              'Copy',
         'InstanceNormalization': 'InstanceNorm',
+        'Equal':                 'EQ',
+        'Less':                  'LT',
+        'Greater':               'GT',
     }
 
     _global_renamed_attrs = {'kernel_shape': 'kernels'}
