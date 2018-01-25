@@ -36,4 +36,4 @@ if [[ $PARALLEL == 1 ]]; then
     PYTEST_ARGS="$PYTEST_ARGS -n 2"
 fi
 
-pytest "$PYTEST_ARGS"
+pytest "${PYTEST_ARGS[@]}"
