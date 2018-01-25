@@ -32,7 +32,7 @@ class Caffe2Frontend(object):
     # ONNX makes a BC breaking change to semantics of operators, having this set
     # to an accurate number will prevent our models form exporting.  However,
     # we should strive to keep this up-to-date as much as possible.
-    _target_opset_version = 2
+    _target_opset_version = 3
 
     _renamed_operators = {
         'SpatialBN': 'BatchNormalization',
