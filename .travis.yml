@@ -6,26 +6,40 @@ python:
   - "2.7"
   - "3.6"
 
+before_install:
+  - ./travis/before_install.sh
+
 install:
-  - ./.travis/install.sh
+  - ./travis/install.sh
 
 script:
-  - ./.travis/build.sh
+  - ./travis/script.sh
+
+after_success:
+  - ./travis/after_success.sh
+
+after_failure:
+  - ./travis/after_failure.sh
 
 cache:
   - directories:
-    - $HOME/.build_cache
+    - $HOME/.cache/pb
     - $HOME/.ccache
 
-env:
-  global:
-    - PB_VERSION=2.6.1
-  matrix:
-    - CAFFE2_VERSION=0d879ed9b496e94288f68299f36afac1d65ed64a
+# We don't want to trigger travis builds for auto PR because there are
+# too many of them and they are updated very frequently. travis can
+# barely catchup and so causing the build status of these PRs always
+# being shown as pending.
 
-addons:
-    apt:
-        sources:
-            - ubuntu-toolchain-r-test
-        packages:
-            - g++-5
+# For each PR, travis triggers two builds, one is "branch updates"
+# which uses the commit in the PR branch, another one is "pull request
+# updates" which uses the merge commit that merges the PR branch into
+# master branch. The following branches filter will only be able to
+# disable builds of "branch updates", but not the "pull request
+# updates", because the latter has branch name "master". To achieve
+# that, we have turned off "Build pull request updates" option in the
+# travis website.
+
+branches:
+  except:
+    - /^auto-.*$/
