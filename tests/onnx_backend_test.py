@@ -14,7 +14,7 @@ import onnx_caffe2.backend as c2
 pytest_plugins = 'onnx.backend.test.report',
 
 backend_test = onnx.backend.test.BackendTest(c2, __name__)
-if 'TRAVIS' in os.environ:
+if 'CI' in os.environ:
     backend_test.exclude('(test_vgg19|test_vgg16)')
 # import all test cases at global scope to make them visible to python.unittest
 globals().update(backend_test
