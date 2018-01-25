@@ -167,7 +167,6 @@ class Caffe2Backend(Backend):
         'Pad': '_create_pad',
         'Concat': '_create_concat',
         'LogSoftmax': '_create_logsoftmax',
-        'OptimizedRNN': '_create_optimized_rnn',
         'Slice': '_create_slice',
         'LSTM': '_create_lstm',
         'GRU': '_create_gru',
@@ -557,30 +556,6 @@ class Caffe2Backend(Backend):
         op = cls._common_onnx_node_to_caffe2_op(init_model, pred_model, n, opset_version)
         assert len(op.output) == 1
         op.output.append(dummy_name())
-        return op
-
-    @classmethod
-    def _create_optimized_rnn(cls, init_model, pred_model, n, opset_version):
-        # TODO: we cheat and rely on the fact that ONNX weight layout matches
-        # CuDNN's. Properly we should extract the weight tensor and invoke
-        # RecurrentParamSet exposed by C2
-
-        # TODO: fix Caffe2 to accept initial_h and initial_c as optional inputs
-        assert len(n.inputs) == 4, 'All inputs need to be specified for now'
-        assert len(n.outputs) == 3, 'All outputs need to be specified for now'
-        (w, x, in_h, in_c) = n.inputs
-        (y, out_h, out_c) = n.outputs
-
-        op = core.CreateOperator(
-            'Recurrent',
-            [x, in_h, in_c, w],
-            [y, out_h, out_c, dummy_name(), dummy_name()],
-            rnn_mode=n.attrs['cell_type'],
-            bidirectional=n.attrs.get('directions', 1) - 1,
-            hidden_size=n.attrs['hidden_size'],
-            num_layers=n.attrs.get('num_layers', 1),
-            input_mode='skip' if n.attrs.get('skip_input_transform', 0)
-            else 'linear')
         return op
 
     @classmethod
