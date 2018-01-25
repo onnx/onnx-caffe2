@@ -21,6 +21,8 @@ else
         ln -sf "$(which ccache)" "$TOP_DIR/ccache/x86_64-linux-gnu-gcc"
         export PATH="$TOP_DIR/ccache:$PATH"
     fi
+    export LC_ALL=C.UTF-8
+    export LANG=C.UTF-8
 fi
 
 # setup virtualenv
