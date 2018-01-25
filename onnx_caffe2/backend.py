@@ -14,7 +14,7 @@ from subprocess import Popen, PIPE
 import caffe2
 from caffe2.python import core, workspace, rnn_cell, gru_cell
 from caffe2.python.model_helper import ModelHelper
-from caffe2.proto import caffe2_pb2
+from caffe2.proto import caffe2_pb2, caffe2_legacy_pb2
 import caffe2.python.utils
 import numpy as np
 import onnx
@@ -727,15 +727,19 @@ class Caffe2Backend(Backend):
         if n.op_type.startswith('Global'):
             n.attrs['global_pooling'] = 1
 
-        try:
-            kernels = n.attrs['kernel_shape']
-            pads = n.attrs['pads']
-        except KeyError:
-            pass
-        else:
-            if len(kernels) == len(pads):
-                # Caffe2 requires pads to be twice the size of kernels.
-                n.attrs['pads'] = pads * 2
+        kernels = n.attrs.get('kernel_shape')
+        pads = n.attrs.get('pads')
+        if kernels and pads and len(kernels) == len(pads):
+            # Caffe2 requires pads to be twice the size of kernels.
+            n.attrs['pads'] = pads * 2
+
+        if pads:
+            n_pads = len(pads)
+            assert n_pads % 2 == 0, 'There should be even number of pads'
+            begins = pads[:n_pads // 2]
+            ends = pads[n_pads // 2:]
+            if begins != ends:
+                n.attrs['legacy_pad'] = caffe2_legacy_pb2.CAFFE_LEGACY_POOLING
 
         return cls._common_onnx_node_to_caffe2_op(init_model, pred_model, n, opset_version)
 
