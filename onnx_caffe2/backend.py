@@ -136,7 +136,6 @@ class Caffe2Backend(Backend):
         'InstanceNormalization': 'InstanceNorm',
         'MatMul':                'BatchMatMul',
         'Upsample':              'ResizeNearest',
-        'Equal':                 'EQ',
         'Identity':              'Copy',
         'InstanceNormalization': 'InstanceNorm',
         'Equal':                 'EQ',
