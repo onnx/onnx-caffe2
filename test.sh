@@ -30,10 +30,10 @@ TEST_DIR="$top_dir/tests"
 
 pip install pytest-cov nbval psutil tabulate
 
-PYTEST_ARGS="$TEST_DIR"
 if [[ $PARALLEL == 1 ]]; then
     pip install pytest-xdist
-    PYTEST_ARGS="$PYTEST_ARGS -n 2"
+    pytest "$TEST_DIR" -n 2
+else
+    pytest "$TEST_DIR"
 fi
 
-pytest "${PYTEST_ARGS[@]}"
