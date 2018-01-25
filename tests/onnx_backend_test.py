@@ -17,8 +17,9 @@ backend_test = onnx.backend.test.BackendTest(c2, __name__)
 if 'CI' in os.environ:
     backend_test.exclude('(test_vgg19|test_vgg16)')
 # import all test cases at global scope to make them visible to python.unittest
-for category, cases in sorted(backend_test.enable_report().test_cases.items()):
-    globals()[category] = cases
+globals().update(backend_test
+                 .enable_report()
+                 .test_cases)
 
 if __name__ == '__main__':
     unittest.main()
