@@ -1,6 +1,8 @@
 onnx-caffe2
 ========
-[![Build Status](https://travis-ci.org/onnx/onnx-caffe2.svg?branch=master)](https://travis-ci.org/onnx/onnx-caffe2)
+| Travis | Jenkins |
+|--------|---------|
+| [![Build Status](https://travis-ci.org/onnx/onnx-caffe2.svg?branch=master)](https://travis-ci.org/onnx/onnx-caffe2) | [![Build Status](https://ci.pytorch.org/jenkins/buildStatus/icon?job=onnx-caffe2-master)](https://ci.pytorch.org/jenkins/job/onnx-caffe2-master/) |
 
 Caffe2 implementation of Open Neural Network Exchange (ONNX).
 
