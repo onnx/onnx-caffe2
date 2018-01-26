@@ -48,7 +48,7 @@ This doc keeps tracking why operators are not covered by the testcases.
 |Log|Yes|OK|&#x1F49A;OK|
 |LogSoftmax||OK|&#x1F49B;No op, translated in onnx-caffe2|
 |LpNormalization|||&#x1F49A;Should be LpNorm, no tests|
-|LpPool|||&#x1F49A;Should be LpNorm, no tests|
+|LpPool|||&#x1F49A;Should be LpPool, no tests|
 |MatMul|Yes|OK|&#x1F49A;OK|
 |Max|Yes|OK|&#x1F49A;OK|
 |MaxPool|Yes|OK|&#x1F49A;OK|
