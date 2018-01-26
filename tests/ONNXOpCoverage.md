@@ -3,108 +3,111 @@
 reports the coverage on the operators and attributes. But we have various of reasons for the missing test coverage on operators.
 This doc keeps tracking why operators are not covered by the testcases.
 
+- &#x1F49A; The ONNX operator can map to a Caffe2 operator.
+- &#x1F49B; The solution is not perfect/finished, for example, the operator can map to a combination of Caffe2 operators.
+- &#x1F494; Hard to find a solution with existing Caffe2 operators.
+
 | Operator | Test Coverage | PyTorch | Caffe2 |
 |---|:--:|:---:|:---:|
-|Abs|Yes|OK|OK|
-|Add|Yes|OK|OK|
-|And||Support int tensor, but no bool tensor|Only support bool tensor|
-|ArgMax||||
-|ArgMin||||
-|AveragePool|Yes|OK|OK|
-|BatchNormalization|Yes|OK|OK|
-|Cast||||
-|Ceil||||
-|Clip|Yes|OK|OK|
-|Concat|Yes|OK|OK|
-|Constant|Yes|OK|OK|
-|Conv|Yes|OK|OK|
-|ConvTranspose||||
-|DepthToSpace||||
-|Div|Yes|OK|OK|
-|Dropout|Yes|OK|OK|
-|Elu|Yes|OK|OK|
-|Equal|Only support floating tensor|OK|Only supoprt int tensor|
-|Exp|Yes|OK|OK|
-|Flatten|Yes|OK|No support for axis|
-|Floor|||No support|
-|GRU||||
-|Gather|Yes|OK|OK|
-|Gemm|Yes|OK|OK|
-|GlobalAveragePool|Yes|No direct mapping|OK|
-|GlobalLpPool||||
-|GlobalMaxPool||||
-|Greater|||Only support int tensor|
-|HardSigmoid|||No support|
-|Hardmax|||No support|
-|InstanceNormalization|||Only support int tensor|
-|LRN|Yes|OK|OK|
-|LSTM||||
-|LeakyRelu|Yes|OK|OK|
-|Less|||Only support int tensor|
-|Log|Yes|OK|OK|
-|LogSoftmax||PyTorch turns logsoftmax to Log and Softmax|No support for logsoftmax|
-|LpNormalization||||
-|LpPool||||
-|MatMul|Yes|OK|OK|
-|Max|Yes|OK|OK|
-|MaxPool|Yes|OK|OK|
-|MaxRoiPool||||
-|Mean||||
-|Min|Yes|OK|OK|
-|Mul|Yes|OK|OK|
-|Neg|Yes|OK|OK|
-|Not||||
-|Or||||
-|PRelu|Yes|OK|OK|
-|Pad|Yes|OK|OK|
-|Pow||OK|Only accept exponent as argument, not an input|
-|RNN||||
-|RandomNormal||||
-|RandomNormalLike||||
-|RandomUniform||||
-|RandomUniformLike||||
-|Reciprocal||||
-|ReduceL1||||
-|ReduceL2||||
-|ReduceLogSum||||
-|ReduceLogSumExp||||
-|ReduceMax||||
-|ReduceMean||||
-|ReduceMin||||
-|ReduceProd||||
-|ReduceSum||||
-|ReduceSumSquare||||
-|Relu|Yes|OK|OK|
-|Reshape|Yes|OK|OK|
-|Selu|Yes|OK|OK|
-|Sigmoid|Yes|OK|OK|
-|Slice|Yes|OK|OK|
-|Softmax|Yes|OK|OK|
-|Softplus|Yes|OK|OK|
-|Softsign||||
-|SpaceToDepth||||
-|Split|Yes|OK|OK|
-|Sqrt||||
-|Squeeze||||
-|Sub||||
-|Sum|Yes|OK|OK|
-|Tanh|Yes|OK|OK|
-|Tile||||
-|Transpose|Yes|OK|OK|
-|Xor||||
-|experimental ATen||||
-|experimental Affine||||
-|experimental ConstantFill||||
-|experimental Crop||||
-|experimental Embedding||||
-|experimental FC||||
-|experimental GRUUnit||||
-|experimental GivenTensorFill||||
-|experimental Identity||||
-|experimental ImageScaler||||
-|experimental MeanVarianceNormalization||||
-|experimental ParametricSoftplus||||
-|experimental Scale||||
-|experimental ScaledTanh||||
-|experimental ThresholdedRelu||||
-|experimental Upsample||||
+|Abs|Yes|OK|&#x1F49A;OK|
+|Add|Yes|OK|&#x1F49A;OK|
+|And||Support int tensor, but no bool tensor|&#x1F49A;OK|
+|ArgMax|||&#x1F494;No op|
+|ArgMin|||&#x1F494;No op|
+|AveragePool|Yes|OK|&#x1F49A;OK|
+|BatchNormalization|Yes|OK|&#x1F49A;OK|
+|Cast|||&#x1F494;No op|
+|Ceil|||&#x1F494;No op|
+|Clip|Yes|OK|&#x1F49A;OK|
+|Concat|Yes|OK|&#x1F49A;OK|
+|Constant|Yes|OK|&#x1F49B;Special handling|
+|Conv|Yes|OK|&#x1F49A;OK|
+|ConvTranspose|||&#x1F49A;OK|
+|DepthToSpace|||&#x1F49B;Should be BatchToSpace, no tests|
+|Div|Yes|OK|&#x1F49A;OK|
+|Dropout|Yes|OK|&#x1F49A;OK|
+|Elu|Yes|OK|&#x1F49A;OK|
+|Equal|Yes|OK|&#x1F49A;OK|
+|Exp|Yes|OK|&#x1F49A;OK|
+|Flatten|Yes|OK|&#x1F49A;OK|
+|Floor|||&#x1F494;No op|
+|GRU|||&#x1F49B;Under development|
+|Gather|Yes|OK|&#x1F49B;C2 only support axis=0 or 1|
+|Gemm|Yes|OK|&#x1F49B;C2 use FC or MatMul + Add|
+|GlobalAveragePool|Yes|No direct mapping|&#x1F49A;OK|
+|GlobalLpPool|||&#x1F494;No op|
+|GlobalMaxPool|||&#x1F49A;OK|
+|Greater|||&#x1F494;Only support int tensor|
+|HardSigmoid|||&#x1F494;No op|
+|Hardmax|||&#x1F494;No op|
+|InstanceNormalization|||&#x1F49A;OK|
+|LRN|Yes|OK|&#x1F49A;OK|
+|LSTM|||&#x1F49B;Under development|
+|LeakyRelu|Yes|OK|&#x1F49A;OK|
+|Less|||&#x1F494;Only support int tensor|
+|Log|Yes|OK|&#x1F49A;OK|
+|LogSoftmax||OK|&#x1F49B;No op, translated in onnx-caffe2|
+|LpNormalization|||&#x1F49A;Should be LpNorm, no tests|
+|LpPool|||&#x1F49A;Should be LpNorm, no tests|
+|MatMul|Yes|OK|&#x1F49A;OK|
+|Max|Yes|OK|&#x1F49A;OK|
+|MaxPool|Yes|OK|&#x1F49A;OK|
+|MaxRoiPool|||&#x1F494;No op|
+|Mean|||&#x1F494;No op|
+|Min|Yes|OK|&#x1F49A;OK|
+|Mul|Yes|OK|&#x1F49A;OK|
+|Neg|Yes|OK|&#x1F49A;OK|
+|Not|||&#x1F49A;OK|
+|Or|||&#x1F49A;OK|
+|PRelu|Yes|OK|&#x1F49A;OK|
+|Pad|Yes|OK|&#x1F49A;OK|
+|Pow||OK|&#x1F49B;Under development, C2 only accepts exponent as argument, not an input|
+|RNN|||&#x1F49B;Under development|
+|RandomNormal|||&#x1F494;No op|
+|RandomNormalLike|||&#x1F494;No op|
+|RandomUniform|||&#x1F494;No op|
+|RandomUniformLike|||&#x1F494;No op|
+|Reciprocal|||&#x1F494;No op|
+|ReduceL1|||&#x1F494;No op|
+|ReduceL2|||&#x1F494;No op|
+|ReduceLogSum|||&#x1F494;No op|
+|ReduceLogSumExp|||&#x1F494;No op|
+|ReduceMax|||&#x1F494;No op|
+|ReduceMean|||&#x1F494;No op|
+|ReduceMin|||&#x1F494;No op|
+|ReduceProd|||&#x1F494;No op|
+|ReduceSum|||&#x1F494;No op|
+|ReduceSumSquare|||&#x1F494;No op|
+|Relu|Yes|OK|&#x1F49A;OK|
+|Reshape|Yes|OK|&#x1F49A;OK|
+|Selu|Yes|OK|&#x1F49A;OK|
+|Sigmoid|Yes|OK|&#x1F49A;OK|
+|Slice|Yes|OK|&#x1F494;ScatterAssign + Cast, very hacky implementaion, Slice in C2 only supports one dimension|
+|Softmax|Yes|OK|&#x1F49A;OK|
+|Softplus|Yes|OK|&#x1F49A;OK|
+|Softsign|||&#x1F49A;OK, no tests|
+|SpaceToDepth|||&#x1F49B;Should be SpaceToBatch, no tests|
+|Split|Yes|OK|&#x1F49A;OK|
+|Sqrt|||&#x1F494;No op|
+|Squeeze|||&#x1F49A;OK, no tests|
+|Sub||OK|&#x1F49A;OK|
+|Sum|Yes|OK|&#x1F49A;OK|
+|Tanh|Yes|OK|&#x1F49A;OK|
+|Tile|||&#x1F49A;OK, no tests|
+|Transpose|Yes|OK|&#x1F49A;OK|
+|Xor|||&#x1F49A;OK|
+|experimental ATen|||&#x1F49A;OK|
+|experimental Affine|||&#x1F494;No op|
+|experimental ConstantFill|||&#x1F49A;OK|
+|experimental Crop|||&#x1F494;No op|
+|experimental FC|||&#x1F49A;OK|
+|experimental GRUUnit|||&#x1F49A;OK, no tests|
+|experimental GivenTensorFill|||&#x1F49A;OK|
+|experimental Identity|||&#x1F49A;OK|
+|experimental ImageScaler|||&#x1F494;No op|
+|experimental MeanVarianceNormalization|||&#x1F494;No op|
+|experimental ParametricSoftplus|||&#x1F494;No op|
+|experimental Scale|||&#x1F49A;OK|
+|experimental ScaledTanh|||&#x1F494;No op|
+|experimental ThresholdedRelu|||&#x1F494;No op|
+|experimental Upsample|||&#x1F494;No bilinear|
