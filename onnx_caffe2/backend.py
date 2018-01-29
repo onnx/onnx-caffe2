@@ -149,6 +149,7 @@ class Caffe2Backend(Backend):
         'Transpose':            {'perm': 'axes'},
         'Upsample':             {'mode': ''},
         'ConvTranspose':        {'output_padding': 'adjs'},
+        'Selu':                 {'gamma': 'scale'},
     }
 
     # operators whose behavior is different beyond renaming
