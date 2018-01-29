@@ -83,7 +83,7 @@ This doc keeps tracking why operators are not covered by the testcases.
 |Selu|Yes|OK|&#x1F49A;OK|
 |Sigmoid|Yes|OK|&#x1F49A;OK|
 |Slice|Yes|OK|&#x1F494;ScatterAssign + Cast, very hacky implementaion, Slice in C2 only supports one dimension|
-|Softmax|Yes|OK|&#x1F49A;OK|
+|Softmax|Yes|OK|&#x1F494;Axis and dim has different semantics|
 |Softplus|Yes|OK|&#x1F49A;OK|
 |Softsign|||&#x1F49A;OK, no tests|
 |SpaceToDepth|||&#x1F49B;Should be SpaceToBatch, no tests|
