@@ -15,9 +15,8 @@ pytest_plugins = 'onnx.backend.test.report',
 
 backend_test = onnx.backend.test.BackendTest(c2, __name__)
 # Skip vgg to speed up CI, skip others because onnx-caffe2 does not support them yet.
-ci_blacklist = ('(test_vgg19|test_vgg'  # Speed up CI.
+ci_blacklist = (r'(test_vgg19|test_vgg'  # Speed up CI.
                 '|test_ceil.*|test_floor.*'  # Does not support Ceil and Floor.
-                '|test_reciprocal.*|test_sqrt.*'  # Does not support Reciprocal and Sqrt.
                 '|test_hardsigmoid.*|test_pow.*'  # Does not suport Hardsigmoid and Pow.
                 ')')
 if 'CI' in os.environ:

@@ -172,6 +172,8 @@ class Caffe2Backend(Backend):
         'LSTM': '_create_lstm',
         'GRU': '_create_gru',
         'RNN': '_create_rnn',
+        'Sqrt': '_create_sqrt',
+        'Reciprocal': '_create_reciprocal',
     }
 
     # NB: By default, you will use the LATEST definition of the operator,
@@ -721,6 +723,28 @@ class Caffe2Backend(Backend):
         # Caffe2 has an extra output
         c2_op.output.append(dummy_name())
         return c2_op
+
+    @classmethod
+    def _create_sqrt(cls, init_model, pred_model, n, opset_version):
+        (X,) = n.inputs
+        (Y,) = n.outputs
+        return core.CreateOperator(
+            'Pow',
+            [X],
+            [Y],
+            exponent=0.5,
+        )
+
+    @classmethod
+    def _create_reciprocal(cls, init_model, pred_model, n, opset_version):
+        (X,) = n.inputs
+        (Y,) = n.outputs
+        return core.CreateOperator(
+            'Pow',
+            [X],
+            [Y],
+            exponent=-1.0,
+        )
 
     @classmethod
     def _direct_initialize_parameters(cls, initializer, ws, device_option):
