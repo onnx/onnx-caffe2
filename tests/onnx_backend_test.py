@@ -18,6 +18,7 @@ backend_test = onnx.backend.test.BackendTest(c2, __name__)
 ci_blacklist = ('(test_vgg19|test_vgg'  # Speed up CI.
                 '|test_ceil.*|test_floor.*'  # Does not support Ceil and Floor.
                 '|test_reciprocal.*|test_sqrt.*'  # Does not support Reciprocal and Sqrt.
+                '|test_hardsigmoid.*|test_pow.*'  # Does not suport Hardsigmoid and Pow.
                 ')')
 if 'CI' in os.environ:
     backend_test.exclude(ci_blacklist)
