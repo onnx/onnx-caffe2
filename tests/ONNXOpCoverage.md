@@ -67,7 +67,7 @@ This doc keeps tracking why operators are not covered by the testcases.
 |RandomNormalLike|||&#x1F494;No op|
 |RandomUniform|||&#x1F494;No op|
 |RandomUniformLike|||&#x1F494;No op|
-|Reciprocal|||&#x1F494;No op|
+|Reciprocal|||&#x1F49B;Use Pow to implement|
 |ReduceL1|||&#x1F494;No op|
 |ReduceL2|||&#x1F494;No op|
 |ReduceLogSum|||&#x1F494;No op|
@@ -88,7 +88,7 @@ This doc keeps tracking why operators are not covered by the testcases.
 |Softsign|||&#x1F49A;OK, no tests|
 |SpaceToDepth|||&#x1F49B;Should be SpaceToBatch, no tests|
 |Split|Yes|OK|&#x1F49A;OK|
-|Sqrt|||&#x1F494;No op|
+|Sqrt|||&#x1F49B;Use Pow to implement|
 |Squeeze|||&#x1F49A;OK, no tests|
 |Sub||OK|&#x1F49A;OK|
 |Sum|Yes|OK|&#x1F49A;OK|
