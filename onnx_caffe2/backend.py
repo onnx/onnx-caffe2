@@ -141,11 +141,13 @@ class Caffe2Backend(Backend):
         'Equal':                 'EQ',
         'Less':                  'LT',
         'Greater':               'GT',
+        'Unsqueeze':             'ExpandDims',
     }
 
     _global_renamed_attrs = {'kernel_shape': 'kernels'}
     _per_op_renamed_attrs = {
         'Squeeze':              {'axes': 'dims'},
+        'Unsqueeze':            {'axes': 'dims'},
         'Transpose':            {'perm': 'axes'},
         'Upsample':             {'mode': ''},
         'ConvTranspose':        {'output_padding': 'adjs'},
