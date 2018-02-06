@@ -374,6 +374,9 @@ class Caffe2Backend(Backend):
 
         input_blob, W, R, B, sequence_lens, initial_h = n.inputs
 
+        if sequence_lens == "":
+            sequence_lens = None
+
         input_size = cls._rnn_shape_inference(init_model, pred_model, n, input_blob, W)
         if input_size is None:
             raise RuntimeError("best-effort shape inference for RNN input failed")
@@ -396,6 +399,7 @@ class Caffe2Backend(Backend):
             input_size,
             hidden_size,
             name,
+            drop_states=True,
             forward_only=True,
             activation=activation
         )
@@ -423,6 +427,9 @@ class Caffe2Backend(Backend):
 
         input_blob, W, R, B, sequence_lens, initial_h, initial_c = n.inputs
 
+        if sequence_lens == "":
+            sequence_lens = None
+
         input_size = cls._rnn_shape_inference(init_model, pred_model, n, input_blob, W)
         if input_size is None:
             raise RuntimeError("best-effort shape inference for LSTM input failed")
@@ -439,6 +446,7 @@ class Caffe2Backend(Backend):
             input_size,
             hidden_size,
             name,
+            drop_states=True,
             forward_only=True,
             return_params=True
         )
@@ -484,6 +492,9 @@ class Caffe2Backend(Backend):
 
         input_blob, W, R, B, sequence_lens, initial_h = n.inputs
 
+        if sequence_lens == "":
+            sequence_lens = None
+
         input_size = cls._rnn_shape_inference(init_model, pred_model, n, input_blob, W)
         if input_size is None:
             raise RuntimeError("best-effort shape inference for GRU input failed")
@@ -500,6 +511,7 @@ class Caffe2Backend(Backend):
             input_size,
             hidden_size,
             name,
+            drop_states=True,
             forward_only=True,
             linear_before_reset=linear_before_reset
         )
