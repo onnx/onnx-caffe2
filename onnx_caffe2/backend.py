@@ -30,6 +30,11 @@ from onnx_caffe2.helper import dummy_name
 
 import warnings
 
+def force_unicode(s):
+    try:
+        return s.decode('utf-8')
+    except AttributeError:
+        return s
 
 def get_device_option(device):
     m = {DeviceType.CPU: caffe2_pb2.CPU,
@@ -369,7 +374,7 @@ class Caffe2Backend(Backend):
 
         attrs = dict(n.attrs) # make a copy, which is safe to mutate
         hidden_size = attrs.pop('hidden_size')
-        activation = attrs.pop('activations')[0]
+        activation = force_unicode(attrs.pop('activations')[0])
         assert not attrs, "unsupported RNN attributes: " + str(attrs.keys())
 
         input_blob, W, R, B, sequence_lens, initial_h = n.inputs
