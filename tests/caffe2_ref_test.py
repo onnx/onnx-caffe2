@@ -277,7 +277,6 @@ class TestCaffe2End2End(TestCase):
         c2_ir = c2.prepare(model)
         onnx_outputs = c2_ir.run(inputs)
         self.assertSameOutputs(c2_outputs, onnx_outputs, decimal=decimal)
-        self.report_mem_usage(net_name)
 
     def _download(self, model):
         model_dir = self._model_dir(model)

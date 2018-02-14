@@ -27,7 +27,7 @@ script_path=$(python -c "import os; import sys; print(os.path.realpath(sys.argv[
 top_dir=$(dirname "$script_path")
 TEST_DIR="$top_dir/tests"
 
-pip install pytest-cov nbval psutil tabulate
+pip install pytest-cov tabulate
 
 if [[ $PARALLEL == 1 ]]; then
     pip install pytest-xdist
