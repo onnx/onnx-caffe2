@@ -6,7 +6,6 @@ from __future__ import unicode_literals
 import unittest
 
 import numpy as np
-import psutil
 
 
 class TestCase(unittest.TestCase):
@@ -17,11 +16,6 @@ class TestCase(unittest.TestCase):
         self.assertEqual(len(outputs1), len(outputs2))
         for o1, o2 in zip(outputs1, outputs2):
             np.testing.assert_almost_equal(o1, o2, decimal=decimal)
-
-    @staticmethod
-    def report_mem_usage(tag):
-        print('Mem usage ({}):'.format(tag),
-              psutil.virtual_memory())
 
     def add_test_case(name, test_func):
         if not name.startswith('test_'):
