@@ -1,3 +1,7 @@
+NOTICE: THIS REPO IS DEPRECATED! onnx-caffe2 has been merge into [Caffe2](https://github.com/caffe2/caffe2/tree/master/caffe2/python/onnx).
+=======
+
+
 onnx-caffe2
 ========
 | Travis | Jenkins |
